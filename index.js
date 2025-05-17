@@ -30,6 +30,7 @@ async function checkForContracts() {
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--disable-gpu'
+      '--single-process'
     ]
   });
   
