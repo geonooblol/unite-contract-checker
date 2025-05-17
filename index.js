@@ -17,7 +17,7 @@ const hook = new Webhook(WEBHOOK_URL || 'https://discord.com/api/webhooks/your-w
 // Configuration
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */2 * * *'; // Every 2 hours by default
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
-const BOOKING_URL = 'https://www.unitestudents.com/booking/search?city=MD&university=UNDEFINED&year=2025&bookingType=DIRECT&period=202526';
+const BOOKING_URL = 'https://www.unitestudents.com/property-search?return=true&city=MD&academicYear=2025+-+2026&lengthOfStay=Academic+Year&roomTypes=ENSUITE';
 const DEFAULT_CONTRACT = '51 weeks'; // The contract we want to avoid
 
 // Set protocol timeout explicitly (fix for the timeout errors)
