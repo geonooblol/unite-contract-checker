@@ -84,12 +84,21 @@ async function checkForContracts() {
     // Accept cookies if the banner appears
     try {
       console.log('Looking for cookie banner...');
-      const cookieSelector = 'button[data-cy="cookie-accept-all"]';
-      const cookieButton = await page.$(cookieSelector);
-      if (cookieButton) {
-        console.log('Cookie banner found, accepting...');
-        await cookieButton.click();
-        await page.waitForTimeout(2000);
+      const cookieSelectors = [
+        'button[data-cy="cookie-accept-all"]',
+        'button[id*="cookie"]',
+        'button[aria-label*="Accept"]',
+        'button[aria-label*="Cookie"]'
+      ];
+      
+      for (const selector of cookieSelectors) {
+        const cookieButton = await page.$(selector);
+        if (cookieButton) {
+          console.log(`Cookie banner found with selector ${selector}, accepting...`);
+          await cookieButton.click();
+          await page.waitForTimeout(2000);
+          break;
+        }
       }
     } catch (e) {
       console.log('No cookie banner found or unable to click it');
@@ -98,131 +107,247 @@ async function checkForContracts() {
     // Debug: Log the current URL
     console.log('Current URL:', await page.url());
     
-    // Find and click "Find a room" button
-    console.log('Looking for "Find a room" button...');
-    
+    // ====== DIRECT NAVIGATION TO BOOKING PAGE INSTEAD OF CLICKING ======
     try {
-      // Wait for the button to be visible and clickable
-      await page.waitForSelector('button[data-event="book_a_room"]', { visible: true, timeout: 60000 });
-      
-      // Take a screenshot before clicking
-      await page.screenshot({ path: '/tmp/before-find-room.png' });
-      console.log('Screenshot before Find a Room click saved');
-      
-      // Click and wait WITHOUT using waitForNavigation (which can be flaky)
-      await Promise.all([
-        page.click('button[data-event="book_a_room"]'),
-        page.waitForTimeout(5000) // Give it time to start navigation
-      ]);
-      
-      // Wait for the page to settle after clicking
-      console.log('Waiting for page to load after clicking Find a Room...');
-      await page.waitForTimeout(10000);
-      
-      // Take a screenshot after clicking
-      await page.screenshot({ path: '/tmp/after-find-room.png' });
-      console.log('Screenshot after Find a Room click saved');
-      
-    } catch (error) {
-      console.error('Error finding or clicking the Find a Room button:', error.message);
-      
-      // Take error screenshot
-      await page.screenshot({ path: '/tmp/error-find-room.png' });
-      console.log('Error screenshot saved');
-      
-      // Try to find it in a different way if the first method failed
-      console.log('Trying alternative method to find the button...');
-      const buttonElements = await page.$$('button');
-      
-      for (const button of buttonElements) {
-        const text = await page.evaluate(el => el.textContent, button);
-        if (text && text.includes('Find a room')) {
-          console.log('Found button with text "Find a room", clicking...');
-          await button.click();
-          await page.waitForTimeout(10000); // Wait for navigation
-          break;
-        }
-      }
-    }
-    
-    // Debug: Get the current URL
-    console.log('Current URL after Find a Room:', await page.url());
-    
-    // Select the ENSUITE option
-    console.log('Looking for ensuite room option...');
-    
-    try {
-      // Wait for ENSUITE button to be visible
-      await page.waitForSelector('button[data-event="select_room_type"][data-room_type="ENSUITE"]', { 
-        visible: true,
+      // Navigate directly to the booking page instead of relying on the button click
+      console.log('Navigating directly to booking page...');
+      await page.goto('https://www.unitestudents.com/booking/medway/pier-quays', { 
+        waitUntil: 'networkidle2',
         timeout: 60000 
       });
       
-      console.log('ENSUITE option found, clicking...');
+      await page.waitForTimeout(5000); // Give it time to load
+      await page.screenshot({ path: '/tmp/booking-page.png' });
+      console.log('Booking page screenshot saved');
       
-      // Click the ENSUITE button
-      await page.click('button[data-event="select_room_type"][data-room_type="ENSUITE"]');
-      await page.waitForTimeout(8000); // Wait for any content to load
-      
-      // Take screenshot after selecting ensuite
-      await page.screenshot({ path: '/tmp/after-ensuite.png' });
-      console.log('Screenshot after ENSUITE selection saved');
+      // Verify we're on the right page by looking for expected content
+      const pageContent = await page.content();
+      if (pageContent.includes('Select your room type') || 
+          pageContent.includes('ENSUITE') || 
+          pageContent.includes('En-suite')) {
+        console.log('Successfully navigated to booking page!');
+      } else {
+        console.log('WARNING: Page content does not match expected booking page');
+      }
       
     } catch (error) {
-      console.error('Error finding or clicking ENSUITE option:', error.message);
+      console.error('Error navigating to booking page:', error.message);
       
-      // Take error screenshot
-      await page.screenshot({ path: '/tmp/error-ensuite.png' });
-      console.log('Error screenshot saved');
-      
-      // Try by text content if data attribute method failed
+      // If direct navigation fails, try the old method of clicking the button
+      console.log('Trying fallback navigation method via button click...');
       try {
-        console.log('Trying alternative method to find ENSUITE option...');
-        const ensuiteText = await page.$x("//button[contains(., 'En-suite')]");
+        await page.goto(PROPERTY_URL, { waitUntil: 'networkidle2' });
+        await page.waitForTimeout(5000);
         
-        if (ensuiteText.length > 0) {
-          console.log('Found ENSUITE button via text content, clicking...');
-          await ensuiteText[0].click();
-          await page.waitForTimeout(8000);
-        }
-      } catch (xpathError) {
-        console.error('Failed alternative method:', xpathError.message);
+        await page.waitForSelector('button[data-event="book_a_room"]', { visible: true, timeout: 30000 });
+        
+        // Click using alternative method
+        await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const findRoomButton = buttons.find(b => 
+            b.textContent.includes('Find a room') || 
+            b.dataset.event === 'book_a_room'
+          );
+          if (findRoomButton) findRoomButton.click();
+        });
+        
+        await page.waitForTimeout(10000);
+      } catch (fallbackError) {
+        console.error('Fallback navigation also failed:', fallbackError.message);
       }
     }
     
     // Debug: Get the current URL
-    console.log('Current URL after selecting ENSUITE:', await page.url());
+    console.log('Current URL after navigation to booking page:', await page.url());
     
-    // Wait for the "Reserve your room" section to load
-    console.log('Waiting for contract information to load...');
+    // ====== SELECT ENSUITE WITH MORE ROBUST METHODS ======
     try {
-      await page.waitForSelector('div.mt-9 span.px-4.font-lato.text-xl.font-bold', { 
-        visible: true,
-        timeout: 60000 
+      console.log('Looking for ENSUITE option...');
+      
+      // Wait to see if the page has room type selection buttons
+      await page.waitForTimeout(5000);
+      await page.screenshot({ path: '/tmp/before-ensuite-selection.png' });
+      
+      // Check if we're already on a page with the "Reserve your room" section
+      const hasReserveSection = await page.evaluate(() => {
+        return !!document.querySelector('div.mt-9') || 
+               document.body.innerText.includes('Reserve your room');
       });
       
-      console.log('Contract information section found!');
+      if (hasReserveSection) {
+        console.log('Already on room reservation page, skipping ENSUITE selection');
+      } else {
+        // Try multiple methods to find and click the ENSUITE option
+        const findEnsuiteMethods = [
+          // Method 1: Look for the specific button with data attributes
+          async () => {
+            const button = await page.$('button[data-event="select_room_type"][data-room_type="ENSUITE"]');
+            if (button) {
+              console.log('Found ENSUITE button with data attributes');
+              await button.click();
+              return true;
+            }
+            return false;
+          },
+          
+          // Method 2: Look for button with "En-suite" text
+          async () => {
+            const found = await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('button'));
+              const ensuiteButton = buttons.find(b => 
+                b.textContent.includes('En-suite') || 
+                b.textContent.includes('ENSUITE') ||
+                b.textContent.includes('Ensuite')
+              );
+              if (ensuiteButton) {
+                ensuiteButton.click();
+                return true;
+              }
+              return false;
+            });
+            
+            if (found) {
+              console.log('Found ENSUITE button by text content');
+              return true;
+            }
+            return false;
+          },
+          
+          // Method 3: Look for div/card with En-suite text that might be clickable
+          async () => {
+            const found = await page.evaluate(() => {
+              const elements = Array.from(document.querySelectorAll('div[id*="room"], div[class*="card"], div[role="button"]'));
+              const ensuiteElement = elements.find(el => 
+                el.textContent.includes('En-suite') || 
+                el.textContent.includes('ENSUITE') ||
+                el.textContent.includes('Ensuite')
+              );
+              if (ensuiteElement) {
+                ensuiteElement.click();
+                return true;
+              }
+              return false;
+            });
+            
+            if (found) {
+              console.log('Found ENSUITE element in card/div');
+              return true;
+            }
+            return false;
+          }
+        ];
+        
+        // Try each method in sequence
+        let ensuiteSelected = false;
+        for (const method of findEnsuiteMethods) {
+          if (await method()) {
+            ensuiteSelected = true;
+            break;
+          }
+        }
+        
+        if (ensuiteSelected) {
+          console.log('ENSUITE option selected successfully');
+          await page.waitForTimeout(8000); // Wait for content to update
+        } else {
+          console.log('WARNING: Could not find or select ENSUITE option');
+          
+          // Let's try a more aggressive approach - just list all clickable elements
+          console.log('Listing all buttons on the page for debugging:');
+          const buttonTexts = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim());
+          });
+          console.log('Buttons found:', buttonTexts);
+          
+          // Check if we're already on a page with rooms
+          const hasRooms = await page.evaluate(() => {
+            return document.body.innerText.includes('Reserve your room') || 
+                   document.body.innerText.includes('Rooms available');
+          });
+          
+          if (hasRooms) {
+            console.log('Page already contains room reservation content, continuing...');
+          } else {
+            throw new Error('Could not select ENSUITE room type');
+          }
+        }
+      }
       
-      // Take screenshot of contract info
-      await page.screenshot({ path: '/tmp/contract-info.png' });
-      console.log('Contract information screenshot saved');
+      // Take screenshot after room type selection
+      await page.screenshot({ path: '/tmp/after-ensuite.png' });
       
-      // Extract all contract options
-      const contracts = await page.evaluate(() => {
-        const contractDivs = document.querySelectorAll('#pricing-option');
+    } catch (error) {
+      console.error('Error selecting ENSUITE option:', error.message);
+      // Continue anyway - we might already be on the right page
+    }
+    
+    // Debug: Get the current URL
+    console.log('Current URL after trying to select ENSUITE:', await page.url());
+    
+    // ====== LOOK FOR CONTRACT INFORMATION WITH MULTIPLE METHODS ======
+    console.log('Looking for contract information...');
+    
+    try {
+      // Check page source for relevant content
+      const pageContent = await page.content();
+      const pageText = await page.evaluate(() => document.body.innerText);
+      
+      console.log('Page URL:', await page.url());
+      console.log('Page contains "Reserve your room":', pageText.includes('Reserve your room'));
+      console.log('Page contains "51 weeks":', pageText.includes('51 weeks'));
+      
+      // Take a screenshot of whatever page we're on
+      await page.screenshot({ path: '/tmp/final-page.png' });
+      
+      // Try different methods to find contract information
+      let contracts = [];
+      
+      // Method 1: Look for pricing option elements
+      contracts = await page.evaluate(() => {
+        const contractDivs = document.querySelectorAll('#pricing-option, [id*="pricing"], [id*="contract"], [role="radio"]');
         if (!contractDivs || contractDivs.length === 0) {
-          console.log('No contract options found in the page');
           return [];
         }
         
         return Array.from(contractDivs).map(div => {
-          const termText = div.querySelector('.font-lato.text-md.font-bold.leading-120')?.textContent?.trim() || 'Unknown term';
-          const dateRange = div.querySelector('.font-open-sans.text-xs.leading-150')?.textContent?.trim() || 'Unknown dates';
-          const contractType = div.querySelector('.font-open-sans.text-2xs.font-normal.leading-150')?.textContent?.trim() || 'Unknown type';
-          const priceText = div.querySelector('.font-open-sans.text-md.font-semibold.leading-150')?.textContent?.trim() || 'Unknown price';
+          // Try to extract term length
+          let termText = '';
+          const termElement = div.querySelector('.font-lato.text-md.font-bold.leading-120') || 
+                             div.querySelector('[class*="font-bold"]') ||
+                             div.querySelector('span[class*="text-md"]');
+          
+          if (termElement) {
+            termText = termElement.textContent.trim();
+          } else {
+            // If no specific element, try to find text that matches a week pattern
+            const allText = div.textContent;
+            const weekMatch = allText.match(/(\d+)\s*weeks?/i);
+            if (weekMatch) {
+              termText = weekMatch[0];
+            }
+          }
+          
+          // Try to extract other information
+          const allText = div.textContent;
+          const dateRangeMatch = allText.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
+          const dateRange = dateRangeMatch ? dateRangeMatch[0] : 'Unknown dates';
+          
+          // Look for contract type
+          let contractType = 'Unknown type';
+          if (allText.includes('Full Year')) {
+            contractType = 'Full Year';
+          } else if (allText.includes('Academic Year')) {
+            contractType = 'Academic Year';
+          } else if (allText.includes('Semester')) {
+            contractType = 'Semester';
+          }
+          
+          // Look for price
+          const priceMatch = allText.match(/£(\d+)/);
+          const priceText = priceMatch ? `£${priceMatch[1]}` : 'Unknown price';
           
           return {
-            term: termText,
+            term: termText || 'Unknown term',
             dates: dateRange,
             type: contractType,
             price: priceText
@@ -230,47 +355,143 @@ async function checkForContracts() {
         });
       });
       
-      console.log(`Found ${contracts.length} contract options:`, contracts);
-      
-      // Check if any non-51-week contracts exist
-      const newContracts = contracts.filter(contract => contract.term !== DEFAULT_CONTRACT);
-      
-      if (newContracts.length > 0) {
-        console.log('New contract options found!');
+      // If we found no contracts, try a more generic approach
+      if (!contracts || contracts.length === 0) {
+        console.log('No contracts found with specific selectors, trying generic text extraction...');
         
-        // Send Discord notification
+        contracts = await page.evaluate(() => {
+          // Look for text containing weeks
+          const textNodes = document.createTreeWalker(
+            document.body, 
+            NodeFilter.SHOW_TEXT, 
+            null, 
+            false
+          );
+          
+          const contractInfo = [];
+          let currentNode;
+          
+          while (currentNode = textNodes.nextNode()) {
+            const text = currentNode.nodeValue.trim();
+            if (text.match(/\d+\s*weeks?/i)) {
+              // Found something about weeks, grab surrounding context
+              const parentElement = currentNode.parentElement;
+              const surroundingText = parentElement ? parentElement.textContent : text;
+              
+              // Extract details
+              const termMatch = surroundingText.match(/(\d+)\s*weeks?/i);
+              const dateMatch = surroundingText.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
+              const priceMatch = surroundingText.match(/£(\d+)/);
+              
+              if (termMatch) {
+                contractInfo.push({
+                  term: termMatch[0],
+                  dates: dateMatch ? dateMatch[0] : 'Unknown dates',
+                  type: surroundingText.includes('Full Year') ? 'Full Year' : 
+                        surroundingText.includes('Academic Year') ? 'Academic Year' : 'Unknown type',
+                  price: priceMatch ? `£${priceMatch[1]}` : 'Unknown price',
+                  context: surroundingText.substring(0, 100) // Include some context for debugging
+                });
+              }
+            }
+          }
+          
+          return contractInfo;
+        });
+      }
+      
+      // Remove duplicates from the contracts array
+      const uniqueContracts = [];
+      const seen = new Set();
+      
+      for (const contract of contracts) {
+        const key = `${contract.term}-${contract.price}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          uniqueContracts.push(contract);
+        }
+      }
+      
+      console.log(`Found ${uniqueContracts.length} contract options:`, uniqueContracts);
+      
+      if (uniqueContracts.length === 0) {
+        // If still no contracts found, send an error message but with the screenshot
         await sendDiscordMessage({
-          title: '🎉 New Contract Options Available! 🎉',
-          description: 'Non-standard contract options have been found for ensuite rooms at Pier Quays!',
-          color: 5814783, // Green color
-          fields: newContracts.map(contract => ({
-            name: `${contract.term} (${contract.type})`,
-            value: `📅 ${contract.dates}\n💰 ${contract.price}`,
-            inline: true
-          })),
+          title: '❓ No Contract Details Found',
+          description: 'The bot navigated to the site but could not extract contract information. An admin should check the bot.',
+          color: 15105570, // Orange/yellow
           footer: {
             text: `Checked at ${new Date().toLocaleString()}`
           },
           url: PROPERTY_URL
         });
       } else {
-        console.log('No new contract options found. Still only 51-week contracts available.');
+        // Check if any non-51-week contracts exist
+        const newContracts = uniqueContracts.filter(contract => !contract.term.includes('51 week'));
+        
+        if (newContracts.length > 0) {
+          console.log('New contract options found!');
+          
+          // Send Discord notification
+          await sendDiscordMessage({
+            title: '🎉 New Contract Options Available! 🎉',
+            description: 'Non-standard contract options have been found for ensuite rooms at Pier Quays!',
+            color: 5814783, // Green color
+            fields: newContracts.map(contract => ({
+              name: `${contract.term} (${contract.type})`,
+              value: `📅 ${contract.dates}\n💰 ${contract.price}`,
+              inline: true
+            })),
+            footer: {
+              text: `Checked at ${new Date().toLocaleString()}`
+            },
+            url: PROPERTY_URL
+          });
+        } else {
+          console.log('No new contract options found. Still only 51-week contracts available.');
+          
+          // Optional: Send a status update message
+          if (process.env.SEND_STATUS_UPDATES === 'true') {
+            await sendDiscordMessage({
+              title: 'Contract Check Complete',
+              description: 'Still only 51-week contracts available at Pier Quays.',
+              color: 10197915, // Blue color
+              footer: {
+                text: `Checked at ${new Date().toLocaleString()}`
+              }
+            });
+          }
+        }
       }
     } catch (error) {
-      console.error('Error checking contract information:', error.message);
+      console.error('Error extracting contract information:', error.message);
       
       // Take error screenshot
-      await page.screenshot({ path: '/tmp/error-contracts.png' });
-      console.log('Error contract section screenshot saved');
+      await page.screenshot({ path: '/tmp/error-final.png' });
       
-      throw new Error(`Failed to find contract information: ${error.message}`);
+      // Send error notification to Discord
+      await sendDiscordMessage({
+        title: '❌ Error Checking Contracts',
+        description: `The bot encountered an error while extracting contract details:\n\`\`\`${error.message}\`\`\``,
+        color: 15158332, // Red color
+        footer: {
+          text: `Error occurred at ${new Date().toLocaleString()}`
+        }
+      });
     }
   } catch (error) {
     console.error('Error during check:', error);
     
     // Send error notification to Discord
     try {
-      await sendDiscordMessage(`❌ **Error checking contracts**: ${error.message}`);
+      await sendDiscordMessage({
+        title: '❌ Error Running Check',
+        description: `The bot encountered a critical error:\n\`\`\`${error.message}\`\`\``,
+        color: 15158332, // Red color
+        footer: {
+          text: `Error occurred at ${new Date().toLocaleString()}`
+        }
+      });
     } catch (webhookErr) {
       console.error("Failed to send webhook:", webhookErr);
     }
