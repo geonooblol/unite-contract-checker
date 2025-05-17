@@ -132,12 +132,10 @@ async function checkForContracts() {
     // Send error notification to Discord
 try {
   await hook.send({
-    username: 'Unite Students Contract Alert',
-    avatarURL: 'https://www.unitestudents.com/favicon.ico',
     content: `❌ Error checking contracts: ${error.message}`
   });
-} catch (webhookError) {
-  console.error('Failed to send webhook notification:', webhookError);
+} catch (webhookErr) {
+  console.error("Failed to send webhook:", webhookErr);
 }
   } finally {
     await browser.close();
