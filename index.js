@@ -1,4 +1,4 @@
-// Unite Students Contract Checker Bot - Updated & Optimized Version
+// Unite Students Contract Checker Bot - Railway Optimized Version
 // Monitors for non-51-week ensuite contracts at Pier Quays
 
 const puppeteer = require('puppeteer-extra');
@@ -19,6 +19,10 @@ const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */2 * * *'; // Every 2 h
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
 const BOOKING_URL = 'https://www.unitestudents.com/booking/search?city=MD&university=UNDEFINED&year=2025&bookingType=DIRECT&period=202526';
 const DEFAULT_CONTRACT = '51 weeks'; // The contract we want to avoid
+
+// Set protocol timeout explicitly (fix for the timeout errors)
+const PROTOCOL_TIMEOUT = 60000; // 60 seconds
+const NAVIGATION_TIMEOUT = 90000; // 90 seconds
 
 // Function to send discord messages
 async function sendDiscordMessage(content) {
@@ -66,6 +70,86 @@ async function sendScreenshot(path, description) {
   }
 }
 
+// Wrapper function for puppeteer evaluate to handle timeouts better
+async function safeEvaluate(page, fnc, errorMessage = "Evaluation failed") {
+  try {
+    return await Promise.race([
+      page.evaluate(fnc),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Evaluation timed out")), 15000)
+      )
+    ]);
+  } catch (error) {
+    console.error(`${errorMessage}: ${error.message}`);
+    return null;
+  }
+}
+
+// Wrapper for safer navigation
+async function safeNavigate(page, url, description = "page") {
+  try {
+    console.log(`Navigating to ${description}: ${url}`);
+    await page.goto(url, { 
+      waitUntil: 'domcontentloaded', // Using domcontentloaded instead of networkidle2 for speed
+      timeout: NAVIGATION_TIMEOUT 
+    });
+    
+    // Wait a bit more for content to settle
+    await page.waitForTimeout(3000);
+    
+    return true;
+  } catch (error) {
+    console.error(`Navigation to ${description} failed: ${error.message}`);
+    return false;
+  }
+}
+
+// Wrapper for safer clicks
+async function safeClick(page, selector, description = "element") {
+  try {
+    console.log(`Attempting to click ${description}: ${selector}`);
+    
+    // First check if element exists
+    const elementExists = await page.$(selector);
+    if (!elementExists) {
+      console.log(`${description} not found: ${selector}`);
+      return false;
+    }
+    
+    // Try to make sure it's visible and clickable
+    await page.waitForSelector(selector, { visible: true, timeout: 5000 });
+    
+    // Try direct click
+    await page.click(selector);
+    console.log(`Clicked ${description}`);
+    
+    // Give time for the click to have an effect
+    await page.waitForTimeout(2000);
+    
+    return true;
+  } catch (error) {
+    console.error(`Failed to click ${description}: ${error.message}`);
+    
+    // Try alternative JavaScript click as fallback
+    try {
+      await page.evaluate((sel) => {
+        const element = document.querySelector(sel);
+        if (element) {
+          element.click();
+          return true;
+        }
+        return false;
+      }, selector);
+      console.log(`JS fallback click on ${description} succeeded`);
+      await page.waitForTimeout(2000);
+      return true;
+    } catch (jsError) {
+      console.error(`JS fallback click failed: ${jsError.message}`);
+      return false;
+    }
+  }
+}
+
 async function checkForContracts() {
   console.log(`[${new Date().toISOString()}] Running contract check...`);
   
@@ -74,10 +158,11 @@ async function checkForContracts() {
   try {
     console.log('Launching browser...');
     
-    // Launch browser with stealth mode to avoid detection
+    // Launch browser with stealth mode and explicit protocol timeout
     browser = await puppeteer.launch({ 
       headless: true,
       executablePath: '/usr/bin/google-chrome-stable',
+      protocolTimeout: PROTOCOL_TIMEOUT, // Explicitly set protocol timeout
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -86,347 +171,411 @@ async function checkForContracts() {
         '--no-first-run',
         '--no-zygote',
         '--single-process',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disk-cache-size=1'  // Minimal disk cache
       ]
     });
     
-    const page = await browser.newPage();
+    // Create context to avoid cookie issues between runs
+    const context = await browser.createIncognitoBrowserContext();
+    const page = await context.newPage();
     
-    // Set a realistic viewport and user agent
-    await page.setViewport({ width: 1366, height: 768 });
+    // Set modest viewport to reduce memory consumption
+    await page.setViewport({ width: 1024, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
     
-    // Add random delay between actions to seem more human-like
-    const randomDelay = () => new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-    
     // Set longer timeouts
-    page.setDefaultNavigationTimeout(120000); // 2 minutes
-    page.setDefaultTimeout(60000); // 1 minute for other operations
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+    page.setDefaultTimeout(PROTOCOL_TIMEOUT);
     
-    // ===== DIRECT APPROACH: START FROM SEARCH RESULTS PAGE =====
-    console.log('Starting with direct search approach...');
+    // Disable resource-heavy content to improve performance
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      // Block non-essential resources
+      const resourceType = req.resourceType();
+      if (
+        resourceType === 'image' || 
+        resourceType === 'font' || 
+        resourceType === 'media' ||
+        (resourceType === 'stylesheet' && !req.url().includes('critical')) ||
+        req.url().includes('analytics') ||
+        req.url().includes('tracking')
+      ) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
     
-    // Navigate to search page with Medway (MD) pre-selected
-    await page.goto(BOOKING_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-    await randomDelay();
-    await page.screenshot({ path: '/tmp/search-page.png' });
-    console.log('Search page loaded');
+    // Random delay helper - shorter delays to speed up process
+    const randomDelay = () => new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
     
-    // Handle cookie consent if it appears
+    // ===== DIRECT APPROACH: Go straight to property page =====
+    // Using direct approach to reduce steps and potential points of failure
+    console.log('Navigating directly to property page...');
+    
+    const navigationSuccessful = await safeNavigate(page, PROPERTY_URL, "property page");
+    if (!navigationSuccessful) {
+      throw new Error("Failed to navigate to property page");
+    }
+    
+    await page.screenshot({ path: '/tmp/property-page.png' });
+    
+    // Handle cookie consent with multiple methods
     try {
-      await page.waitForSelector('button[id*="cookie"], button[aria-label*="Cookie"], button:has-text("Accept All")', { 
-        timeout: 5000,
-        visible: true
-      });
+      console.log('Checking for cookie banner...');
       
-      await page.evaluate(() => {
+      // Try different cookie accept methods
+      const cookieBannerExists = await page.evaluate(() => {
+        // Method 1: Look for buttons with cookie text
         const cookieButtons = Array.from(document.querySelectorAll('button'));
         const acceptButton = cookieButtons.find(b => 
-          b.textContent.includes('Accept All') || 
-          b.textContent.includes('Allow All') ||
-          (b.getAttribute('aria-label') && b.getAttribute('aria-label').includes('Cookie'))
+          b.textContent.includes('Accept') || 
+          b.textContent.includes('Allow') ||
+          (b.getAttribute('id') && b.getAttribute('id').includes('cookie'))
         );
-        if (acceptButton) acceptButton.click();
+        
+        if (acceptButton) {
+          acceptButton.click();
+          return true;
+        }
+        
+        // Method 2: Look for cookie banner and get the accept button
+        const cookieBanners = Array.from(document.querySelectorAll('div[id*="cookie"], div[class*="cookie"]'));
+        for (const banner of cookieBanners) {
+          const buttons = banner.querySelectorAll('button');
+          for (const button of buttons) {
+            if (button.textContent.includes('Accept') || button.textContent.includes('Allow')) {
+              button.click();
+              return true;
+            }
+          }
+        }
+        
+        return false;
       });
       
-      await page.waitForTimeout(2000);
-      console.log('Cookie consent handled');
+      if (cookieBannerExists) {
+        console.log('Cookie consent handled via JS');
+        await page.waitForTimeout(1000);
+      } else {
+        console.log('No cookie banner detected');
+      }
     } catch (e) {
-      console.log('No cookie banner or already accepted');
+      console.log('Error handling cookie banner:', e.message);
     }
     
-    // Click on Pier Quays in search results
+    // Look for "Find a room" button with more robust detection
     try {
-      console.log('Looking for Pier Quays in search results...');
-      await page.screenshot({ path: '/tmp/before-property-selection.png' });
+      console.log('Looking for booking option...');
       
-      // Wait for search results to load
-      await page.waitForTimeout(5000);
+      // Try a variety of selectors that might contain the button
+      const bookingSelectors = [
+        'button[data-event="book_a_room"]',
+        'button:has-text("Find a room")',
+        'a:has-text("Find a room")',
+        'button:has-text("Book now")',
+        'a:has-text("Book now")',
+        'div.flex button span:has-text("Find a room")'
+      ];
       
-      // Try to find Pier Quays in the search results
-      const foundProperty = await page.evaluate(() => {
-        // Look for property cards or links containing "Pier Quays"
-        const elements = [
-          ...document.querySelectorAll('a[href*="pier-quays"]'),
-          ...document.querySelectorAll('div[class*="card"]'),
-          ...document.querySelectorAll('h2, h3, h4')
-        ];
-        
-        const pierQuaysElement = elements.find(el => 
-          el.textContent.includes('Pier Quays')
-        );
-        
-        if (pierQuaysElement) {
-          console.log('Found Pier Quays element:', pierQuaysElement);
-          // If it's a link, navigate to it
-          if (pierQuaysElement.tagName === 'A') {
-            return {
-              type: 'link',
-              href: pierQuaysElement.href
-            };
+      let buttonClicked = false;
+      
+      // Try each selector
+      for (const selector of bookingSelectors) {
+        try {
+          const buttonExists = await page.$(selector);
+          if (buttonExists) {
+            await safeClick(page, selector, "booking button");
+            buttonClicked = true;
+            break;
           }
-          // Otherwise click it
-          else {
-            pierQuaysElement.click();
-            return {
-              type: 'element'
-            };
-          }
+        } catch (error) {
+          console.log(`Selector ${selector} failed:`, error.message);
         }
-        
-        return false;
-      });
-      
-      if (foundProperty) {
-        console.log('Found Pier Quays property:', foundProperty);
-        
-        if (foundProperty.type === 'link') {
-          await page.goto(foundProperty.href, { waitUntil: 'networkidle2' });
-        } else {
-          // Wait for navigation after click
-          await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {
-            console.log('No navigation occurred after clicking property');
-          });
-        }
-        
-        await page.waitForTimeout(5000);
-        await page.screenshot({ path: '/tmp/property-page.png' });
-      } else {
-        console.log('Could not find Pier Quays in search results, trying direct property URL...');
-        await page.goto(PROPERTY_URL, { waitUntil: 'networkidle2' });
       }
-    } catch (error) {
-      console.error('Error finding Pier Quays property:', error.message);
-      console.log('Trying direct navigation to property page...');
-      await page.goto(PROPERTY_URL, { waitUntil: 'networkidle2' });
-    }
-    
-    // Take a screenshot of where we are
-    await page.screenshot({ path: '/tmp/before-room-search.png' });
-    
-    // Now find and click "Find a room" or navigate directly to booking
-    try {
-      console.log('Looking for booking options...');
       
-      // First check if we need to click "Find a room"
-      const needsRoomButton = await page.evaluate(() => {
-        return !!document.querySelector('button[data-event="book_a_room"]') || 
-               document.body.innerText.includes('Find a room');
-      });
-      
-      if (needsRoomButton) {
-        console.log('Found "Find a room" button, clicking it...');
-        
-        await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button, a'));
-          const roomButton = buttons.find(b => 
-            (b.dataset && b.dataset.event === 'book_a_room') ||
-            b.textContent.includes('Find a room') ||
-            b.textContent.includes('Book a room')
+      // If no selector worked, try JS evaluation
+      if (!buttonClicked) {
+        const clickResult = await page.evaluate(() => {
+          // Find anything with "room" and "find" or "book" text that looks clickable
+          const elements = [
+            ...document.querySelectorAll('button'),
+            ...document.querySelectorAll('a[href*="book"], a[href*="room"]')
+          ];
+          
+          const bookButton = elements.find(el => 
+            (el.textContent.toLowerCase().includes('find') && el.textContent.toLowerCase().includes('room')) ||
+            (el.textContent.toLowerCase().includes('book') && el.textContent.toLowerCase().includes('now'))
           );
-          if (roomButton) roomButton.click();
+          
+          if (bookButton) {
+            bookButton.click();
+            return true;
+          }
+          return false;
         });
         
-        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {
-          console.log('No navigation after clicking Find a room');
-        });
+        if (clickResult) {
+          console.log("Found and clicked booking button via JS evaluation");
+          buttonClicked = true;
+        }
+      }
+      
+      if (buttonClicked) {
+        // Wait for navigation after clicking the button
+        try {
+          await page.waitForNavigation({ timeout: 10000 });
+        } catch (navError) {
+          console.log("No navigation occurred after clicking booking button");
+        }
         
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(3000);
         await page.screenshot({ path: '/tmp/after-find-room.png' });
-      }
-    } catch (error) {
-      console.error('Error clicking Find a room:', error.message);
-    }
-    
-    // Now we should either be on the room selection page or the booking page
-    console.log('Current URL:', await page.url());
-    
-    // Check for room type selection (ENSUITE)
-    try {
-      console.log('Looking for room type options...');
-      await page.screenshot({ path: '/tmp/room-type-selection.png' });
-      
-      // Try to find and click ENSUITE option with multiple methods
-      const foundEnsuite = await page.evaluate(() => {
-        // Method 1: Look for specific data attributes
-        const dataButtons = Array.from(document.querySelectorAll('button[data-room_type="ENSUITE"], button[data-event="select_room_type"]'));
-        const ensuiteDataButton = dataButtons.find(b => 
-          b.dataset.roomType === 'ENSUITE' || 
-          (b.dataset.event === 'select_room_type' && b.textContent.includes('En-suite'))
-        );
-        
-        if (ensuiteDataButton) {
-          ensuiteDataButton.click();
-          return 'data-attribute';
-        }
-        
-        // Method 2: Look for text content
-        const allButtons = Array.from(document.querySelectorAll('button'));
-        const ensuiteTextButton = allButtons.find(b => 
-          b.textContent.includes('En-suite') || 
-          b.textContent.includes('Ensuite') ||
-          b.textContent.includes('ENSUITE')
-        );
-        
-        if (ensuiteTextButton) {
-          ensuiteTextButton.click();
-          return 'text-content';
-        }
-        
-        // Method 3: Look for card elements
-        const cards = Array.from(document.querySelectorAll('div[id*="room"], div[role="radio"], div[class*="card"]'));
-        const ensuiteCard = cards.find(card => 
-          card.textContent.includes('En-suite') || 
-          card.textContent.includes('Ensuite') ||
-          card.textContent.includes('ENSUITE')
-        );
-        
-        if (ensuiteCard) {
-          ensuiteCard.click();
-          return 'card-element';
-        }
-        
-        return false;
-      });
-      
-      if (foundEnsuite) {
-        console.log(`Found and clicked ENSUITE option using method: ${foundEnsuite}`);
-        await page.waitForTimeout(8000);
-        await page.screenshot({ path: '/tmp/after-ensuite-click.png' });
       } else {
-        console.log('Could not find ENSUITE option, checking if we are already on the booking page...');
+        console.log("Could not find booking button, trying to continue anyway");
       }
     } catch (error) {
-      console.error('Error selecting ENSUITE room type:', error.message);
+      console.error('Error with booking button:', error.message);
     }
     
-    // ===== CHECK FOR CONTRACT INFORMATION =====
-    console.log('Looking for contract information...');
-    await page.screenshot({ path: '/tmp/contract-check.png' });
+    // Check current URL to determine next steps
+    const currentUrl = await page.url();
+    console.log('Current URL:', currentUrl);
     
-    // Wait a moment for any dynamic content to load
+    // Navigate to room selection if we're not already there
+    if (!currentUrl.includes('booking')) {
+      console.log('Not on booking page, trying direct navigation to booking URL');
+      await safeNavigate(page, BOOKING_URL, "booking page");
+      await page.screenshot({ path: '/tmp/booking-page.png' });
+      
+      // Look for Pier Quays property
+      try {
+        console.log('Looking for Pier Quays in property list...');
+        
+        const foundProperty = await page.evaluate(() => {
+          // Look for anything with "Pier Quays" text
+          const elements = [
+            ...document.querySelectorAll('a'),
+            ...document.querySelectorAll('div'),
+            ...document.querySelectorAll('h2, h3, h4')
+          ];
+          
+          const pierQuaysElement = elements.find(el => 
+            el.textContent.includes('Pier Quays')
+          );
+          
+          if (pierQuaysElement) {
+            if (pierQuaysElement.tagName === 'A' && pierQuaysElement.href) {
+              window.location.href = pierQuaysElement.href;
+              return 'Navigated via href';
+            } else {
+              pierQuaysElement.click();
+              return 'Clicked element';
+            }
+          }
+          
+          return false;
+        });
+        
+        if (foundProperty) {
+          console.log(`Found Pier Quays: ${foundProperty}`);
+          await page.waitForTimeout(5000);
+          await page.screenshot({ path: '/tmp/property-selected.png' });
+        } else {
+          console.log('Could not find Pier Quays in property list');
+        }
+      } catch (error) {
+        console.error('Error finding property:', error.message);
+      }
+    }
+    
+    // Look for ENSUITE room option
+    try {
+      console.log('Looking for ENSUITE room option...');
+      await page.screenshot({ path: '/tmp/room-options.png' });
+      
+      const ensuiteSelectors = [
+        'button[data-room_type="ENSUITE"]',
+        'button[data-event="select_room_type"][aria-label="Select ENSUITE"]',
+        'button[id="room-option-card"]:has-text("En-suite")'
+      ];
+      
+      let ensuiteSelected = false;
+      
+      // Try each selector
+      for (const selector of ensuiteSelectors) {
+        try {
+          const exists = await page.$(selector);
+          if (exists) {
+            await safeClick(page, selector, "ENSUITE option");
+            ensuiteSelected = true;
+            break;
+          }
+        } catch (error) {
+          console.log(`Selector ${selector} failed:`, error.message);
+        }
+      }
+      
+      // If no selector worked, try JS evaluation
+      if (!ensuiteSelected) {
+        const clickResult = await page.evaluate(() => {
+          // Look for anything that mentions ensuite
+          const elements = [
+            ...document.querySelectorAll('button'),
+            ...document.querySelectorAll('div[role="button"]'),
+            ...document.querySelectorAll('div[class*="card"]')
+          ];
+          
+          const ensuiteElement = elements.find(el => 
+            el.textContent.includes('En-suite') || 
+            el.textContent.includes('Ensuite') ||
+            el.textContent.includes('ENSUITE')
+          );
+          
+          if (ensuiteElement) {
+            ensuiteElement.click();
+            return true;
+          }
+          return false;
+        });
+        
+        if (clickResult) {
+          console.log("Found and clicked ENSUITE option via JS evaluation");
+          ensuiteSelected = true;
+        } else {
+          console.log("Could not find ENSUITE option");
+        }
+      }
+      
+      if (ensuiteSelected) {
+        await page.waitForTimeout(5000);
+        await page.screenshot({ path: '/tmp/after-ensuite-selection.png' });
+      }
+    } catch (error) {
+      console.error('Error selecting ENSUITE room:', error.message);
+    }
+    
+    // ===== EXTRACT CONTRACT INFORMATION =====
+    console.log('Looking for contract information...');
+    await page.screenshot({ path: '/tmp/contract-info.png' });
+    
+    // Wait more time for contract info to load
     await page.waitForTimeout(5000);
     
-    // First check if we're on the room selection page with contract info
-    const pageContent = await page.content();
-    const pageText = await page.evaluate(() => document.body.innerText);
-    
-    console.log('Current URL for contract check:', await page.url());
-    console.log('Page contains "Reserve your room":', pageText.includes('Reserve your room'));
-    console.log('Page contains "51 weeks":', pageText.includes('51 weeks'));
-    console.log('Page contains "weeks":', /\d+\s*weeks/i.test(pageText));
-    
-    // Extract contract information
+    // Use a more gentle extraction that won't time out
     let contracts = [];
     
     try {
-      // Look for pricing options with expanded selectors
-      contracts = await page.evaluate(() => {
-        // First try to find standard pricing option elements
-        const contractSections = [
-          ...document.querySelectorAll('#pricing-option, [id*="pricing"], [role="radio"]'),
-          ...document.querySelectorAll('div.mt-9 div, div[class*="contract"], div[class*="pricing"]')
-        ];
+      // Break down the evaluation into smaller chunks to prevent timeouts
+      // Step 1: Check if the page contains week information
+      const containsWeekInfo = await safeEvaluate(page, () => {
+        const bodyText = document.body.textContent;
+        return {
+          hasWeeks: /\d+\s*weeks?/i.test(bodyText),
+          hasReserve: bodyText.includes('Reserve your room'),
+          bodyTextSample: bodyText.substring(0, 200) // Sample for debugging
+        };
+      }, "Week info check");
+      
+      console.log('Page content check:', containsWeekInfo);
+      
+      if (containsWeekInfo && (containsWeekInfo.hasWeeks || containsWeekInfo.hasReserve)) {
+        // Step 2: Extract pricing options text (simple version to avoid timeouts)
+        const contractTextContent = await safeEvaluate(page, () => {
+          // Find all divs that might contain contract info
+          const possibleContainers = [
+            ...document.querySelectorAll('div.mt-9'),
+            ...document.querySelectorAll('div[id*="pricing"]'),
+            ...document.querySelectorAll('div[role="radiogroup"]'),
+            ...document.querySelectorAll('div:has(> span:contains("Reserve"))')
+          ];
+          
+          // Get text content from these containers
+          return possibleContainers.map(container => container.textContent);
+        }, "Contract text extraction");
         
-        if (contractSections.length > 0) {
-          return Array.from(contractSections).map(div => {
-            // Extract all text content
-            const allText = div.textContent.trim();
+        console.log('Found contract containers:', contractTextContent);
+        
+        // Step 3: Simple regex-based extraction from the text
+        if (contractTextContent && contractTextContent.length > 0) {
+          // Process each container's text content
+          contractTextContent.forEach(text => {
+            if (!text) return;
             
-            // Look for term length
-            let term = 'Unknown term';
-            const weekMatch = allText.match(/(\d+)\s*weeks?/i);
-            if (weekMatch) {
-              term = weekMatch[0];
+            // Look for term lengths
+            const weekMatches = text.match(/(\d+)\s*weeks?/gi);
+            if (weekMatches) {
+              weekMatches.forEach(weekMatch => {
+                // Extract contract details
+                let contractInfo = {
+                  term: weekMatch,
+                  dates: 'Unknown dates',
+                  type: 'Unknown type',
+                  price: 'Unknown price'
+                };
+                
+                // Try to extract dates
+                const dateMatch = text.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
+                if (dateMatch) {
+                  contractInfo.dates = dateMatch[0];
+                }
+                
+                // Try to extract contract type
+                if (text.includes('Full Year')) {
+                  contractInfo.type = 'Full Year';
+                } else if (text.includes('Academic Year')) {
+                  contractInfo.type = 'Academic Year';
+                } else if (text.includes('Semester')) {
+                  contractInfo.type = 'Semester';
+                }
+                
+                // Try to extract price
+                const priceMatch = text.match(/£(\d+)/);
+                if (priceMatch) {
+                  contractInfo.price = `£${priceMatch[1]}`;
+                }
+                
+                contracts.push(contractInfo);
+              });
             }
-            
-            // Look for date range
-            let dates = 'Unknown dates';
-            const dateMatch = allText.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
-            if (dateMatch) {
-              dates = dateMatch[0];
-            }
-            
-            // Look for contract type
-            let type = 'Unknown type';
-            if (allText.includes('Full Year')) {
-              type = 'Full Year';
-            } else if (allText.includes('Academic Year')) {
-              type = 'Academic Year';
-            } else if (allText.includes('Semester')) {
-              type = 'Semester';
-            }
-            
-            // Look for price
-            let price = 'Unknown price';
-            const priceMatch = allText.match(/£(\d+)/);
-            if (priceMatch) {
-              price = `£${priceMatch[1]}`;
-            }
-            
-            return { term, dates, type, price, context: allText.substring(0, 150) };
           });
         }
         
-        // Fallback: Look through the entire page for week patterns
-        const weekPatterns = [];
-        const textWalker = document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-          null,
-          false
-        );
-        
-        let node;
-        while (node = textWalker.nextNode()) {
-          const text = node.nodeValue.trim();
-          const weekMatch = text.match(/(\d+)\s*weeks?/i);
+        // Step 4: If no contracts found, try a more basic approach
+        if (contracts.length === 0) {
+          console.log('No contracts found with container method, trying direct page scan');
           
-          if (weekMatch) {
-            // Get surrounding context
-            let contextElement = node.parentElement;
-            // Go up a few levels to get more context
-            for (let i = 0; i < 3; i++) {
-              if (contextElement.parentElement) {
-                contextElement = contextElement.parentElement;
-              }
-            }
-            
-            const contextText = contextElement.textContent.trim();
-            
-            // Extract details from context
-            const dateMatch = contextText.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
-            const priceMatch = contextText.match(/£(\d+)/);
-            
-            let type = 'Unknown type';
-            if (contextText.includes('Full Year')) {
-              type = 'Full Year';
-            } else if (contextText.includes('Academic Year')) {
-              type = 'Academic Year';
-            } else if (contextText.includes('Semester')) {
-              type = 'Semester';
-            }
-            
-            weekPatterns.push({
-              term: weekMatch[0],
-              dates: dateMatch ? dateMatch[0] : 'Unknown dates',
-              type: type,
-              price: priceMatch ? `£${priceMatch[1]}` : 'Unknown price',
-              context: contextText.substring(0, 150)
+          // Look for week mentions directly in the page
+          const pageWeeks = await safeEvaluate(page, () => {
+            const weekMatches = document.body.textContent.match(/(\d+)\s*weeks?/gi);
+            return weekMatches || [];
+          }, "Direct week search");
+          
+          console.log('Direct week mentions found:', pageWeeks);
+          
+          if (pageWeeks && pageWeeks.length > 0) {
+            // Create basic contract entries
+            pageWeeks.forEach(weekTerm => {
+              contracts.push({
+                term: weekTerm,
+                dates: 'Found via direct scan',
+                type: 'Unknown',
+                price: 'Unknown'
+              });
             });
           }
         }
-        
-        return weekPatterns;
-      });
+      }
       
       // Remove duplicates
       const uniqueContracts = [];
       const seen = new Set();
       
       for (const contract of contracts) {
-        // Create a unique key from term and price
-        const key = `${contract.term}-${contract.price}`;
+        // Create a unique key from term
+        const key = contract.term;
         if (!seen.has(key)) {
           seen.add(key);
           uniqueContracts.push(contract);
@@ -442,16 +591,17 @@ async function checkForContracts() {
         
         await sendDiscordMessage({
           title: '❓ Contract Check Completed - No Details Found',
-          description: 'The bot could not find any contract information. This could mean the system is working differently than expected, or no rooms are currently available.',
+          description: 'The bot couldn\'t find any contract information. This could mean either no rooms are available or the website structure has changed.',
           color: 15105570, // Orange/yellow
           url: await page.url()
         });
         
         // Send the screenshot
-        await sendScreenshot('/tmp/contract-check.png', 'Current page state');
+        await sendScreenshot('/tmp/contract-info.png', 'Current page state');
       } else {
         // Check for non-51-week contracts
         const newContracts = uniqueContracts.filter(contract => 
+          contract.term && 
           !contract.term.includes('51') && 
           contract.term !== 'Unknown term'
         );
@@ -465,15 +615,15 @@ async function checkForContracts() {
             description: 'Non-standard contract options have been found for ensuite rooms at Pier Quays!',
             color: 5814783, // Green color
             fields: newContracts.map(contract => ({
-              name: `${contract.term} (${contract.type})`,
-              value: `📅 ${contract.dates}\n💰 ${contract.price}`,
+              name: contract.term,
+              value: `📅 ${contract.dates}\n💰 ${contract.price || 'Price unknown'}\n📋 ${contract.type || 'Type unknown'}`,
               inline: true
             })),
             url: await page.url()
           });
           
           // Send screenshot of the page
-          await sendScreenshot('/tmp/contract-check.png', 'Contract options');
+          await sendScreenshot('/tmp/contract-info.png', 'Contract options');
         } else {
           console.log('Only standard 51-week contracts found.');
           
@@ -499,7 +649,7 @@ async function checkForContracts() {
       });
       
       // Send error screenshot
-      await sendScreenshot('/tmp/contract-check.png', 'Error state');
+      await sendScreenshot('/tmp/contract-info.png', 'Error state');
     }
     
   } catch (error) {
@@ -530,9 +680,9 @@ cron.schedule(CHECK_INTERVAL, checkForContracts, {
   timezone: 'Europe/London' // Set to UK timezone
 });
 
-// Initial check on startup (with delay)
+// Initial check on startup (with longer delay)
 console.log('Unite Students Contract Checker Bot starting...');
-setTimeout(checkForContracts, 10000); // Delay the first check by 10 seconds
+setTimeout(checkForContracts, 20000); // Delay the first check by 20 seconds
 
 // Keep the process alive
 process.on('SIGINT', () => {
