@@ -1,1 +1,0 @@
-# unite-contract-checker
