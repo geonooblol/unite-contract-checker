@@ -46,7 +46,7 @@ async function checkForContracts() {
     
     // Navigate to the property page
     console.log('Navigating to property page...');
-    await page.goto(PROPERTY_URL, { waitUntil: 'networkidle2' });
+    await page.goto(PROPERTY_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     await randomDelay();
     
     // Accept cookies if the banner appears
@@ -130,18 +130,15 @@ async function checkForContracts() {
     console.error('Error during check:', error);
     
     // Send error notification to Discord
-    await hook.send({
-      username: 'Unite Students Contract Alert',
-      avatarURL: 'https://www.unitestudents.com/favicon.ico',
-      embeds: [{
-        title: '❌ Error Checking Contracts',
-        description: `The bot encountered an error while checking for new contracts:\n\`\`\`${error.message}\`\`\``,
-        color: 15158332, // Red color
-        footer: {
-          text: `Error occurred at ${new Date().toLocaleString()}`
-        }
-      }]
-    });
+try {
+  await hook.send({
+    username: 'Unite Students Contract Alert',
+    avatarURL: 'https://www.unitestudents.com/favicon.ico',
+    content: `❌ Error checking contracts: ${error.message}`
+  });
+} catch (webhookError) {
+  console.error('Failed to send webhook notification:', webhookError);
+}
   } finally {
     await browser.close();
   }
