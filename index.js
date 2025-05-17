@@ -29,7 +29,7 @@ async function checkForContracts() {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
-      '--disable-gpu'
+      '--disable-gpu',
       '--single-process'
     ]
   });
