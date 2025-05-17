@@ -21,29 +21,23 @@ const DEFAULT_CONTRACT = '51 weeks'; // The contract we want to avoid
 async function checkForContracts() {
   console.log(`[${new Date().toISOString()}] Running contract check...`);
 
-console.log('Launching browser with extra debug info...');
-try {
-  // browser launch code here
-} catch (browserError) {
-  console.error('Browser launch failed:', browserError);
-  process.exit(1);
-}
+  console.log('Launching browser...');
   
   // Launch browser with stealth mode to avoid detection
   const browser = await puppeteer.launch({ 
-  headless: true,
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '',
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
-    '--no-zygote',
-    '--single-process',
-    '--disable-gpu'
-  ]
-});
+    headless: true,
+    executablePath: '/usr/bin/google-chrome-stable', // This is the path in the puppeteer Docker image
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ]
+  });
   
   try {
     const page = await browser.newPage();
@@ -140,13 +134,13 @@ try {
     console.error('Error during check:', error);
     
     // Send error notification to Discord
-try {
-  await hook.send({
-    content: `❌ Error checking contracts: ${error.message}`
-  });
-} catch (webhookErr) {
-  console.error("Failed to send webhook:", webhookErr);
-}
+    try {
+      await hook.send({
+        content: `❌ Error checking contracts: ${error.message}`
+      });
+    } catch (webhookErr) {
+      console.error("Failed to send webhook:", webhookErr);
+    }
   } finally {
     await browser.close();
   }
