@@ -1,0 +1,20 @@
+{
+  "name": "unite-contract-checker",
+  "version": "1.0.0",
+  "description": "Bot to check for academic year contracts at Unite Students Pier Quays",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer": "^21.5.0",
+    "discord-webhook-node": "^1.1.8",
+    "node-cron": "^3.0.2",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
