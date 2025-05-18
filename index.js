@@ -208,7 +208,7 @@ async function checkForContracts() {
 
     // Navigate to the property page
     console.log('Navigating to property page...');
-    await page.goto(PROPERTY_URL, { waitUntil: 'networkidle2' });
+    await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
     console.log('Page loaded');
     
     // Handle cookie consent if it appears
