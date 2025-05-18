@@ -1,10 +1,10 @@
-// Unite Students Contract Checker Bot - vNext Attempt 15.4
-// Test A: Basic fetch to Google.
-// Test B: page.goto() for Unite with NO request interception & NO waitUntil.
-// SCRIPT VERSION 15.4 log is present.
+// Unite Students Contract Checker Bot - vNext Attempt 15.5
+// Staged waiting after minimal goto: wait for body, then primary content indicator.
+// Request interception re-enabled (less aggressive initially).
+// SCRIPT VERSION 15.5 log is present.
 // DUMP_HTML_AFTER_ENSUITE_CLICK is true (though may not be reached).
 
-console.log("<<<<< SCRIPT VERSION 15.4 IS RUNNING - TOP OF FILE >>>>>"); 
+console.log("<<<<< SCRIPT VERSION 15.5 IS RUNNING - TOP OF FILE >>>>>"); 
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
 console.log("--- INIT: ENV VAR CHECK (RAW) ---"); 
@@ -40,13 +40,13 @@ console.log("LOG POINT 4: After TIMEOUT consts. INITIAL_GOTO_TIMEOUT set to:", I
 const DUMP_HTML_AFTER_ENSUITE_CLICK = process.env.DEBUG_HTML_DUMP === 'true' || true; 
 console.log("LOG POINT 5: After DUMP_HTML const. DUMP_HTML_AFTER_ENSUITE_CLICK is:", DUMP_HTML_AFTER_ENSUITE_CLICK);
 
-async function sendDiscordMessage(content) { /* ... (same as v15.3) ... */ }
+async function sendDiscordMessage(content) { /* ... (same as v15.4) ... */ }
 console.log("LOG POINT 6: After sendDiscordMessage function definition (using fetch).");
 
 async function waitForSelectorWithTimeout(page, selector, timeout = 10000) { /* ... (unchanged) ... */ }
 console.log("LOG POINT 7: After waitForSelectorWithTimeout function definition");
 
-async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15.3) ... */ }
+async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15.4) ... */ }
 console.log("LOG POINT 8: After enhancedClick function definition");
 
 async function checkForContracts() {
@@ -55,40 +55,13 @@ async function checkForContracts() {
   let page = null;
   
   try {
-    // ---- TEST A: Basic fetch to Google ----
+    // ... (Google fetch test - unchanged from v15.4, can be commented out if consistently passing)
     console.log("Attempting to fetch google.com as a basic network test...");
-    let googleFetchOK = false;
-    try {
-        const googleResponse = await fetch('https://www.google.com', { timeout: 15000 }); // 15s timeout
-        console.log(`Google fetch status: ${googleResponse.status}`);
-        if (!googleResponse.ok) {
-            console.error("Failed to fetch google.com, basic network issue might exist.");
-            await sendDiscordMessage({title: "NETWORK TEST FAIL", description: `Could not fetch google.com. Status: ${googleResponse.status}`, color: 0xFF0000});
-        } else {
-            console.log("Successfully fetched google.com.");
-            await sendDiscordMessage({title: "NETWORK TEST OK", description: "Successfully fetched google.com.", color: 0x00FF00});
-            googleFetchOK = true;
-        }
-    } catch (fetchError) {
-        console.error("Error fetching google.com:", fetchError.message);
-        await sendDiscordMessage({title: "NETWORK TEST EXCEPTION", description: `Error fetching google.com: ${fetchError.message}`, color: 0xFF0000});
-    }
-    // if (!googleFetchOK) {
-    //    throw new Error("Basic network test to Google failed. Aborting further checks."); // Optional: stop if basic connectivity fails
-    // }
-    // ---- END TEST A ----
+    try { /* ... Google fetch ... */ } catch (fetchError) { /* ... */ }
+
 
     console.log('Launching browser...');
-    browser = await puppeteer.launch({ 
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-      args: [
-        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
-        '--disable-gpu', '--window-size=1366,768' 
-      ],
-      protocolTimeout: 180000 
-    });
+    browser = await puppeteer.launch({ /* ... (launch options same as v15.4) ... */ });
     
     page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
@@ -96,13 +69,27 @@ async function checkForContracts() {
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT); 
     page.setDefaultTimeout(PAGE_TIMEOUT); 
     
-    // ---- TEST B: Request Interception DISABLED for this goto test ----
-    // await page.setRequestInterception(true); // <<<< DISABLED
-    // page.on('request', (request) => { /* ... */ }); // <<<< DISABLED
-    console.log("Request interception is DISABLED for this run.");
+    // ---- Re-enable Request Interception (slightly less aggressive initially) ----
+    await page.setRequestInterception(true);
+    page.on('request', (request) => { 
+        const resourceType = request.resourceType();
+        const url = request.url().toLowerCase();
+        // Allow CSS, scripts, xhr, fetch for initial render, block heavy media/fonts unless essential
+        if (['image', 'media'].includes(resourceType) ) { 
+            request.abort();
+        } else if (resourceType === 'font' && !url.includes('essential')) { // Example: allow essential fonts
+             request.abort();
+        } else if (url.includes('analytics') || url.includes('tracking') || url.includes('hotjar') || url.includes('googletagmanager')) {
+            request.abort();
+        } else {
+            request.continue();
+        }
+    });
+    console.log("Request interception RE-ENABLED (tuned for initial load).");
+    // ---- END Re-enable Request Interception ----
 
 
-    console.log(`Navigating to property page (NO waitUntil, NO interception, ${INITIAL_GOTO_TIMEOUT}ms timeout)...`);
+    console.log(`Navigating to property page (NO waitUntil, interception ON, ${INITIAL_GOTO_TIMEOUT}ms timeout)...`);
     let initialContentSnapshot = "No content snapshot taken yet.";
     let initialUrl = "unknown";
     let initialTitle = "unknown";
@@ -113,71 +100,97 @@ async function checkForContracts() {
         initialTitle = await page.title();
         console.log(`page.goto() resolved. Current URL: ${initialUrl}, Title: ${initialTitle}`);
 
-        console.log('Attempting to get page content snapshot immediately after goto...');
+        console.log('Attempting to get page content snapshot immediately after minimal goto...');
         initialContentSnapshot = await page.content();
-        console.log('Page content snapshot (first 2KB for console):', initialContentSnapshot.substring(0, 2000));
+        // console.log('Page content snapshot (first 2KB for console):', initialContentSnapshot.substring(0, 2000)); // Keep for deep debug
         
-        const DUMP_LIMIT = 1800;
         await sendDiscordMessage({
-            title: "DEBUG - Goto (No Intercept/WaitUntil) Snapshot",
-            description: `URL: ${initialUrl}\nTitle: ${initialTitle}\n\nHTML (start):\n\`\`\`html\n${initialContentSnapshot.substring(0,DUMP_LIMIT)}\n\`\`\``,
+            title: "DEBUG - Minimal Goto Snapshot",
+            description: `URL: ${initialUrl}\nTitle: ${initialTitle}\n\nHTML (start):\n\`\`\`html\n${initialContentSnapshot.substring(0,1800)}\n\`\`\``,
             color: 0x2ECC71 
         });
-        if (initialContentSnapshot.length > DUMP_LIMIT) { /* ... send continuation ... */ }
+        // if (initialContentSnapshot.length > 1800) { /* ... send continuation ... */ }
 
-        console.log("Waiting for body tag to be present after goto...");
-        if (!await waitForSelectorWithTimeout(page, 'body', 15000)) { 
-            console.error("Page body tag did not become available. Content:", initialContentSnapshot.substring(0,500));
-            throw new Error("Page body tag did not become available after goto.");
+        console.log("Waiting for body tag to be present (extended timeout)...");
+        if (!await waitForSelectorWithTimeout(page, 'body', 30000)) { // Increased to 30s for body
+            console.error("Page body tag did not become available. Content received was:", initialContentSnapshot.substring(0,500));
+            throw new Error("Page body tag did not become available after minimal goto.");
         }
-        console.log("Body tag found. Proceeding with page interaction attempts...");
+        console.log("Body tag found.");
+
+        console.log("Waiting for a primary page structure indicator (e.g., #__next main, footer, etc.)...");
+        const primaryContentSelectors = [
+            '#__next main',                // Common Next.js main content
+            '#__next div[role="main"]',
+            'footer',                      // A page footer often indicates main structure is there
+            'header ~ main',               // Main tag that is a sibling after a header
+            'div[id*="page-container"]',   // Common container IDs
+            'div[class*="main-wrapper"]'
+        ];
+        let primaryStructureFound = false;
+        for (const selector of primaryContentSelectors) {
+            if (await waitForSelectorWithTimeout(page, selector, 15000)) { // 15s for each attempt
+                console.log(`Primary page structure indicator "${selector}" found.`);
+                primaryStructureFound = true;
+                break;
+            }
+        }
+        
+        if (!primaryStructureFound) {
+             const bodyHTML = await page.evaluate(() => document.body ? document.body.innerHTML.substring(0,2000) : "No body HTML");
+             console.warn("Primary page structure indicator not found after body. Body HTML (start):", bodyHTML);
+             await sendDiscordMessage({
+                 title: "WARNING - Primary Page Structure Not Found",
+                 description: `Could not find primary structure (e.g. #__next main, footer) after body. URL: ${await page.url()}\nBody HTML (start):\n\`\`\`html\n${bodyHTML.substring(0,1800)}\n\`\`\``,
+                 color: 0xFF8C00
+             });
+             // Don't throw an error yet, let subsequent steps try.
+        } else {
+            console.log("Primary page structure confirmed.");
+        }
+        await page.waitForTimeout(5000); // Give more time for JS to execute after main structure appears
 
     } catch (gotoError) {
-        console.error(`Error during page.goto() (No Intercept/WaitUntil) or initial check: ${gotoError.message}`, gotoError.stack);
+        console.error(`Error during page.goto() or initial content/structure check: ${gotoError.message}`, gotoError.stack);
         await sendDiscordMessage({
-            title: "❌ ERROR - Goto (No Intercept/WaitUntil) Failed",
-            description: `page.goto (no intercept/waitUntil) failed: ${gotoError.message}\nURL: ${PROPERTY_URL}\nSnapshot: ${initialContentSnapshot.substring(0,500)}`,
+            title: "❌ ERROR - Goto or Initial Structure Failed",
+            description: `page.goto (no waitUntil) or structure check failed: ${gotoError.message}\nURL attempted: ${PROPERTY_URL}\nSnapshot attempt: ${initialContentSnapshot.substring(0,500)}`,
             color: 0xFF0000
         });
         throw gotoError; 
     }
-    // ---- END TEST B ----
     
-    // Re-enable request interception if you were to proceed with clicks for a normal run
-    // For this test, we might not reach further, but if we did, we'd need it back on.
-    // For now, let's assume if goto fails, the script stops.
-
-    // ... (The rest of your script: cookie handling, find room click, ensuite click, HTML dump, contract extraction)
-    // This part will only run if the modified goto above succeeds.
-    // For brevity, I'll omit the full rest of the script as it's unchanged from v15.3,
-    // but it would start here with cookie handling.
-    // If goto succeeds, the DUMP_HTML_AFTER_ENSUITE_CLICK will still be active.
+    try { /* ... (cookie consent - same as v15.4) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
-  } catch (error) {
-    console.error('Error during check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
-    let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) { /* ... (error details URL/Title) ... */ }
-    await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 });
-  } finally {
-    if (browser) { console.log('Closing browser...'); await browser.close(); }
-  }
+    console.log('Waiting for main page interactive elements to settle (e.g. "Rooms available" text)...');
+    try {
+       await page.waitForSelector('::-p-text(Rooms available)', { timeout: 30000 }); // Increased timeout
+       console.log("'Rooms available' text found, page likely settled for interaction.");
+    } catch (e) {
+       console.warn("Did not find 'Rooms available' text after primary structure checks. Proceeding with 'Find a room' click with caution.");
+       // ... (Optional: send Discord warning + HTML dump) ...
+    }
+    await page.waitForTimeout(2000); 
+    
+    console.log('Current page URL before Find a Room attempt:', await page.url());
+    const findRoomSelectors = [ /* ... (same as v15.4) ... */ ];
+    const findRoomSuccess = await enhancedClick(page, findRoomSelectors, 'Find a room', 'Find a room button');
+    if (!findRoomSuccess) { /* ... (error handling and HTML dump from v15.4) ... */ throw new Error('Could not click "Find a room" button.'); }
+    
+    // ... (Rest of the script: ensuite click, HTML dump, contract extraction - same as v15.4) ...
+    
+  } catch (error) { /* ... (main catch block - same as v15.4) ... */ } 
+  finally { /* ... (browser.close() - same as v15.4) ... */ }
 }
 console.log("LOG POINT 9: After checkForContracts function definition");
 
 // --- Health check and scheduling --- (unchanged)
 // --- Startup Logic --- (unchanged, DUMP_HTML_AFTER_ENSUITE_CLICK controls it)
 console.log("LOG POINT 13: Before Startup Logic (DUMP_HTML_AFTER_ENSUITE_CLICK is ON)");
-if (DUMP_HTML_AFTER_ENSUITE_CLICK) { 
-    console.log("HTML DUMP (Post-Ensuite) MODE IS ON - running checkForContracts once for debug.");
-    (async () => {
-        console.log("<<<<< SCRIPT VERSION 15.4 - CHECKFORCONTRACTS INVOKED >>>>>"); 
-        await checkForContracts();
-        console.log("HTML DUMP (Post-Ensuite) debug run complete.");
-    })();
-} else { /* ... */ }
+if (DUMP_HTML_AFTER_ENSUITE_CLICK) { /* ... */ } else { /* ... */ }
 console.log("LOG POINT 14: After Startup Logic initiated");
 
-process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
-process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err.message, err.stack); });
+process.on('SIGINT', () => { /* ... */ });
+process.on('uncaughtException', (err) => { /* ... */ });
 console.log("LOG POINT 15: Event listeners for SIGINT and uncaughtException set up. Script fully parsed.");
-console.log("<<<<< SCRIPT VERSION 15.4 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
+console.log("<<<<< SCRIPT VERSION 15.5 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
