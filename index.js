@@ -1,9 +1,9 @@
-// Unite Students Contract Checker Bot - vNext Attempt 15.2
-// Increased NAVIGATION_TIMEOUT, changed waitUntil to 'load' for page.goto().
-// SCRIPT VERSION 15.1 log is still present for deployment verification.
-// DUMP_HTML_AFTER_ENSUITE_CLICK is true.
+// Unite Students Contract Checker Bot - vNext Attempt 15.3
+// page.goto() with NO waitUntil and shorter timeout, then immediate content check.
+// SCRIPT VERSION 15.3 log is present for deployment verification.
+// DUMP_HTML_AFTER_ENSUITE_CLICK is true (though may not be reached).
 
-console.log("<<<<< SCRIPT VERSION 15.2 IS RUNNING - TOP OF FILE >>>>>"); // Updated version marker
+console.log("<<<<< SCRIPT VERSION 15.3 IS RUNNING - TOP OF FILE >>>>>"); 
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
 console.log("--- INIT: ENV VAR CHECK (RAW) ---"); 
@@ -31,21 +31,22 @@ console.log("LOG POINT 2: After CHECK_INTERVAL, before PROPERTY_URL");
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
 console.log("LOG POINT 3: After PROPERTY_URL");
 
-// ---- MODIFIED TIMEOUTS ----
-const NAVIGATION_TIMEOUT = 120000; // Increased to 120 seconds (2 minutes)
-const PAGE_TIMEOUT = 150000;    // Also increased page timeout slightly
-console.log("LOG POINT 4: After TIMEOUT consts. NAVIGATION_TIMEOUT set to:", NAVIGATION_TIMEOUT);
+// Using a specific shorter timeout for the initial goto test
+const INITIAL_GOTO_TIMEOUT = 45000; // 45 seconds for the minimal goto attempt
+const NAVIGATION_TIMEOUT = 120000; // General navigation timeout for other operations
+const PAGE_TIMEOUT = 150000;    
+console.log("LOG POINT 4: After TIMEOUT consts. INITIAL_GOTO_TIMEOUT set to:", INITIAL_GOTO_TIMEOUT);
 
 const DUMP_HTML_AFTER_ENSUITE_CLICK = process.env.DEBUG_HTML_DUMP === 'true' || true; 
 console.log("LOG POINT 5: After DUMP_HTML const. DUMP_HTML_AFTER_ENSUITE_CLICK is:", DUMP_HTML_AFTER_ENSUITE_CLICK);
 
-async function sendDiscordMessage(content) { /* ... (same as v15) ... */ }
+async function sendDiscordMessage(content) { /* ... (same as v15.2) ... */ }
 console.log("LOG POINT 6: After sendDiscordMessage function definition (using fetch).");
 
 async function waitForSelectorWithTimeout(page, selector, timeout = 10000) { /* ... (unchanged) ... */ }
 console.log("LOG POINT 7: After waitForSelectorWithTimeout function definition");
 
-async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15) ... */ }
+async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15.2) ... */ }
 console.log("LOG POINT 8: After enhancedClick function definition");
 
 async function checkForContracts() {
@@ -69,25 +70,65 @@ async function checkForContracts() {
     page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT); // Uses the new global const
-    page.setDefaultTimeout(PAGE_TIMEOUT); // Uses the new global const
+    // Default navigation timeout will be used by clicks/waits, but goto will use its own explicit timeout
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT); 
+    page.setDefaultTimeout(PAGE_TIMEOUT); 
     
+    // --- REQUEST INTERCEPTION IS KEPT ENABLED FOR NOW ---
     await page.setRequestInterception(true);
-    page.on('request', (request) => { /* ... (request interception - kept enabled) ... */ });
+    page.on('request', (request) => { /* ... (request interception) ... */ });
 
-    console.log('Navigating to property page...');
-    // ---- MODIFIED GOTO ----
-    await page.goto(PROPERTY_URL, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT }); // timeout here overrides defaultNavTimeout for this call
-    console.log('Page loaded (or at least load event fired)');
+    // ---- MODIFIED GOTO: NO waitUntil, SHORTER TIMEOUT ----
+    console.log(`Navigating to property page (minimal wait test - ${INITIAL_GOTO_TIMEOUT}ms timeout)...`);
+    let initialContentSnapshot = "No content snapshot taken yet.";
+    let initialUrl = "unknown";
+    let initialTitle = "unknown";
+
+    try {
+        await page.goto(PROPERTY_URL, { timeout: INITIAL_GOTO_TIMEOUT }); // NO waitUntil
+        initialUrl = await page.url();
+        initialTitle = await page.title();
+        console.log(`page.goto() resolved (minimal wait). Current URL: ${initialUrl}, Title: ${initialTitle}`);
+
+        console.log('Attempting to get page content snapshot immediately after minimal goto...');
+        initialContentSnapshot = await page.content();
+        console.log('Page content snapshot (first 2KB for console):', initialContentSnapshot.substring(0, 2000));
+        
+        // Send this initial snapshot to Discord
+        const DUMP_LIMIT = 1800;
+        await sendDiscordMessage({
+            title: "DEBUG - Minimal Goto Snapshot",
+            description: `URL: ${initialUrl}\nTitle: ${initialTitle}\n\nHTML (start):\n\`\`\`html\n${initialContentSnapshot.substring(0,DUMP_LIMIT)}\n\`\`\``,
+            color: 0x2ECC71 // Green for this specific debug
+        });
+        if (initialContentSnapshot.length > DUMP_LIMIT) {
+            await sendDiscordMessage({ title: "DEBUG - Minimal Goto Snapshot (cont.)", description: `\`\`\`html\n${initialContentSnapshot.substring(DUMP_LIMIT, DUMP_LIMIT*2)}\n\`\`\``, color: 0x2ECC71 });
+        }
+
+        console.log("Waiting for body tag to be present after minimal goto...");
+        if (!await waitForSelectorWithTimeout(page, 'body', 15000)) { // Wait for body tag
+            console.error("Page body tag did not become available after minimal goto. Content received was:", initialContentSnapshot.substring(0,500));
+            throw new Error("Page body tag did not become available after minimal goto.");
+        }
+        console.log("Body tag found. Proceeding with page interaction attempts...");
+
+    } catch (gotoError) {
+        console.error(`Error during minimal page.goto() or initial content check: ${gotoError.message}`, gotoError.stack);
+        await sendDiscordMessage({
+            title: "❌ ERROR - Minimal Goto Failed",
+            description: `page.goto (no waitUntil) failed or initial check failed: ${gotoError.message}\nURL attempted: ${PROPERTY_URL}\nSnapshot attempt: ${initialContentSnapshot.substring(0,500)}`,
+            color: 0xFF0000
+        });
+        throw gotoError; // Re-throw to stop the script and trigger main catch
+    }
+    // ---- END MODIFIED GOTO ----
     
-    try { /* ... (cookie consent) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
+    try { /* ... (cookie consent, brief as before) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
-    // --- MORE ROBUST WAIT BEFORE "Find a room" (same as v15) ---
     console.log('Waiting for main page content to settle before finding "Find a room" button...');
     try { /* ... (wait for "Rooms available") ... */ } catch (e) { /* ... (warning and HTML dump if not found) ... */ }
     await page.waitForTimeout(2000); 
-    // --- END MORE ROBUST WAIT ---
-
+    
     console.log('Current page URL before Find a Room attempt:', await page.url());
     
     const findRoomSelectors = [ /* ... (same as v15) ... */ ];
@@ -95,24 +136,11 @@ async function checkForContracts() {
     if (!findRoomSuccess) { /* ... (error handling and HTML dump from v15) ... */ throw new Error('Could not click "Find a room" button.'); }
     
     // ... (Rest of the script from "Waiting for page to transition..." onwards is the same as v15) ...
-    // This includes the "Attempting to locate general room type..."
-    // The "ensuiteSuccess" click
-    // The "Immediate HTML dump logic"
-    // The "Extracting contract information..." with its internal try...catch
-    // And the final processing of contracts or errors.
     
   } catch (error) {
     console.error('Error during check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
     let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) { 
-        try { 
-            const currentUrl = await page.url(); 
-            const currentTitle = await page.title(); 
-            errorDetails += `\nURL: ${currentUrl}, Title: ${currentTitle}`; 
-        } catch (e) {
-            errorDetails += `\n(Could not get page URL/title for error report: ${e.message})`;
-        }
-    }
+    if (page) { /* ... (error details URL/Title) ... */ }
     await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 });
   } finally {
     if (browser) { console.log('Closing browser...'); await browser.close(); }
@@ -126,18 +154,14 @@ console.log("LOG POINT 13: Before Startup Logic (DUMP_HTML_AFTER_ENSUITE_CLICK i
 if (DUMP_HTML_AFTER_ENSUITE_CLICK) { 
     console.log("HTML DUMP (Post-Ensuite) MODE IS ON - running checkForContracts once for debug.");
     (async () => {
-        console.log("<<<<< SCRIPT VERSION 15.2 - CHECKFORCONTRACTS INVOKED >>>>>"); 
+        console.log("<<<<< SCRIPT VERSION 15.3 - CHECKFORCONTRACTS INVOKED >>>>>"); 
         await checkForContracts();
         console.log("HTML DUMP (Post-Ensuite) debug run complete.");
     })();
-} else { 
-    const startupDelay = Math.floor(Math.random() * 7000) + 3000; 
-    console.log(`Bot starting initial check in ${startupDelay/1000}s... (Normal mode)`);
-    setTimeout(checkForContracts, startupDelay);
-}
+} else { /* ... */ }
 console.log("LOG POINT 14: After Startup Logic initiated");
 
 process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
 process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err.message, err.stack); });
 console.log("LOG POINT 15: Event listeners for SIGINT and uncaughtException set up. Script fully parsed.");
-console.log("<<<<< SCRIPT VERSION 15.2 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
+console.log("<<<<< SCRIPT VERSION 15.3 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
