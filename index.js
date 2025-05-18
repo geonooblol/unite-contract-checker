@@ -1,5 +1,5 @@
-// Unite Students Contract Checker Bot - vNext Attempt 5
-// TEMPORARY HARDCODING of webhook URL for diagnosis.
+// Unite Students Contract Checker Bot - vNext Attempt 6
+// Webhook Diagnosis: Initializing with URL string directly to constructor.
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
 console.log("--- INIT: ENV VAR CHECK (RAW) ---");
@@ -22,7 +22,7 @@ console.log("ASSIGNED_WEBHOOK_URL_FROM_ENV:", ASSIGNED_WEBHOOK_URL_FROM_ENV);
 console.log("Typeof ASSIGNED_WEBHOOK_URL_FROM_ENV:", typeof ASSIGNED_WEBHOOK_URL_FROM_ENV);
 console.log("--- END AFTER DOTENV: ENV VAR CHECK ---");
 
-// --- MODIFIED WEBHOOK INITIALIZATION WITH TEMPORARY HARDCODING ---
+// --- MODIFIED WEBHOOK INITIALIZATION (OPTION 1 TEST) ---
 const placeholderUrl = 'https://discord.com/api/webhooks/your-webhook-url-placeholder';
 
 // --- !!! TEMPORARY HARDCODING FOR DIAGNOSIS !!! ---
@@ -30,19 +30,17 @@ const placeholderUrl = 'https://discord.com/api/webhooks/your-webhook-url-placeh
 // PASTE YOUR ACTUAL DISCORD WEBHOOK URL BETWEEN THE QUOTES ON THE NEXT LINE:
 const THE_ACTUAL_URL_STRING_TO_TEST = "https://discord.com/api/webhooks/1373352326160584744/KvT0AGjoczodqXHWC6mdIFnDzt58zjGxPP48RPQkJ0rmL8qK6QSOg1YNsyncYRXQ1Dyl"; 
 // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-console.log("TEST: Directly hardcoded URL string being used for new Webhook():", THE_ACTUAL_URL_STRING_TO_TEST);
+console.log("TEST (Option 1): Directly hardcoded URL string for new Webhook(string_directly):", THE_ACTUAL_URL_STRING_TO_TEST);
 
-const hook = new Webhook({
-    url: THE_ACTUAL_URL_STRING_TO_TEST, // Using the directly hardcoded string
-    throwErrors: true, 
-    retryOnLimit: false 
-});
-console.log("Webhook object initialized with HARDCODED URL. Actual URL being used by 'hook':", hook.url);
+// Try initializing by passing the URL string directly to the constructor
+const hook = new Webhook(THE_ACTUAL_URL_STRING_TO_TEST); 
+   
+console.log("Webhook object initialized with URL STRING DIRECTLY. Actual URL being used by 'hook':", hook.url);
 
 if (!hook.url || hook.url === placeholderUrl || !hook.url.startsWith('https://discord.com/api/webhooks/')) {
-    console.error(`CRITICAL (with hardcode): Webhook URL is STILL not set correctly in hook object. hook.url is: "${hook.url}". This points to an issue with the library or the URL string itself.`);
+    console.error(`CRITICAL (direct string init): Webhook URL is STILL not set correctly in hook object. hook.url: "${hook.url}".`);
 } else {
-    console.log("SUCCESS (with hardcode): Webhook URL appears to be set correctly in the hook object!");
+    console.log("SUCCESS (direct string init): Webhook URL appears to be set correctly in the hook object!");
 }
 // --- END MODIFIED WEBHOOK INITIALIZATION ---
 
@@ -59,6 +57,7 @@ async function sendDiscordMessage(content) {
     console.warn(`Discord webhook URL appears invalid or is a placeholder in sendDiscordMessage. Current hook.url: "${hook.url}". Skipping notification.`);
     return;
   }
+  // ... (rest of sendDiscordMessage is the same as vNext Attempt 5)
   try {
     const embed = new MessageBuilder()
       .setTitle(content.title)
@@ -72,7 +71,6 @@ async function sendDiscordMessage(content) {
     console.log('Discord notification sent successfully');
   } catch (error) {
     console.error(`Failed to send Discord notification. Title: ${content.title}. Error:`, error.message, error.stack ? error.stack.substring(0,500) : '');
-    // Avoid sending another message if the webhook itself is the problem.
   }
 }
 
@@ -86,6 +84,7 @@ async function waitForSelectorWithTimeout(page, selector, timeout = 10000) {
 }
 
 async function enhancedClick(page, selectors, textContent, description = "element") {
+  // ... (enhancedClick is the same as vNext Attempt 5)
   for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
     try {
       console.log(`Attempting to click ${description} using selector: ${selector}`);
@@ -116,12 +115,16 @@ async function checkForContracts() {
     browser = await puppeteer.launch({ 
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-      args: [ /* ... (browser args) ... */ ],
+      args: [ /* ... (browser args from v5) ... */ 
+        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
+        '--disable-gpu', '--window-size=1366,768'
+      ],
       protocolTimeout: 180000 
     });
     
     page = await browser.newPage();
-    /* ... (viewport, useragent, timeouts, request interception setup) ... */
+    // ... (viewport, useragent, timeouts, request interception setup from v5) ...
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
@@ -135,26 +138,24 @@ async function checkForContracts() {
         else { request.continue(); }
     });
 
-
     console.log('Navigating to property page...');
     await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
     console.log('Page loaded');
     
-    try { /* ... (cookie consent) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
+    try { /* ... (cookie consent from v5) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
     console.log('Current page URL:', page.url());
     
     const findRoomSuccess = await enhancedClick(page, ['button[data-event="book_a_room"]'], 'Find a room', 'Find a room button');
     if (!findRoomSuccess) throw new Error('Could not click "Find a room" button.');
     
+    // ... (Wait and debug after "Find a room" from v5, including the HTML dump to Discord on failure) ...
     console.log('Waiting for page to transition after "Find a room" click...');
     await page.waitForTimeout(7000); 
-    
     const urlAfterFindRoom = await page.url();
     const titleAfterFindRoom = await page.title();
     console.log('Current URL after Find Room and initial wait:', urlAfterFindRoom);
     console.log('Page title after Find Room and initial wait:', titleAfterFindRoom);
-
     console.log('Attempting to locate general room type selection interface (e.g., any button with data-room_type)...');
     if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 35000)) { 
         console.error("No room type buttons (e.g., [data-room_type]) found/visible in time even after extended wait.");
@@ -185,6 +186,7 @@ async function checkForContracts() {
     }
     console.log('General room type buttons interface appears to be ready.');
 
+
     const ensuiteSuccess = await enhancedClick(page, 
         ['button[data-room_type="ENSUITE"]', 'button[aria-label="Select ENSUITE"]', 'button[aria-label*="En-suite" i]', 'div[role="button"][aria-label*="En-suite" i]'], 
         'En-suite', 'Ensuite option'
@@ -197,31 +199,31 @@ async function checkForContracts() {
 
     console.log(`On page for contract extraction: ${await page.title()} | URL: ${await page.url()}`);
 
-    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic) ... */ }
+    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic from v5) ... */ }
     
     console.log('Extracting contract information...');
-    const contracts = await page.evaluate(() => { /* ... (contract extraction logic) ... */ });
+    const contracts = await page.evaluate(() => { /* ... (contract extraction logic from v5) ... */ });
     
     console.log('Extracted contracts:', JSON.stringify(contracts, null, 2));
     
-    if (!contracts || contracts.length === 0) { /* ... (No details found message) ... */ } 
-    else { /* ... (Process new contracts / standard only message) ... */ }
+    if (!contracts || contracts.length === 0) { /* ... (No details found message from v5) ... */ } 
+    else { /* ... (Process new contracts / standard only message from v5) ... */ }
     
   } catch (error) {
     console.error('Error during check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
     let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) { /* ... (error details URL/Title) ... */ }
+    if (page) { /* ... (error details URL/Title from v5) ... */ }
     await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 });
   } finally {
     if (browser) { console.log('Closing browser...'); await browser.close(); }
   }
 }
 
-// --- Health check and scheduling (unchanged) ---
+// --- Health check and scheduling (unchanged from v5) ---
 if (process.env.ENABLE_HEALTH_CHECK === 'true') { /* ... */ }
 cron.schedule(CHECK_INTERVAL, checkForContracts, { scheduled: true, timezone: 'Europe/London' });
 
-// --- Startup Logic (unchanged) ---
+// --- Startup Logic (unchanged from v5) ---
 if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... */ } 
 else { /* ... */ }
 
