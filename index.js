@@ -23,7 +23,7 @@ const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
 
 // Increased timeouts to handle container throttling
-const INITIAL_GOTO_TIMEOUT = a90000;
+const INITIAL_GOTO_TIMEOUT = 90000;
 const NAVIGATION_TIMEOUT = 180000;
 const PAGE_TIMEOUT = 240000;
 const PROTOCOL_TIMEOUT = 300000;
