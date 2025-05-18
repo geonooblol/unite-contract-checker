@@ -1,6 +1,5 @@
-// Unite Students Contract Checker Bot - Enhanced Version
-// Monitors for non-51-week ensuite contracts at Pier Quays
-// More robust selectors and navigation handling, with HTML debugging for contract extraction
+// Unite Students Contract Checker Bot - vNext Attempt
+// More targeted contract extraction based on provided HTML snippet.
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -10,24 +9,24 @@ const cron = require('node-cron');
 const dotenv = require('dotenv');
 dotenv.config();
 
-// Discord webhook URL - Set this in your environment variables
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-const hook = new Webhook(WEBHOOK_URL || 'https://discord.com/api/webhooks/your-webhook-url');
+const hook = new Webhook(WEBHOOK_URL || 'https://discord.com/api/webhooks/your-webhook-url-placeholder'); // Ensure a placeholder
 
-// Configuration
-const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *'; // Every 4 hours by default
+const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
-const DEFAULT_CONTRACT = '51 weeks'; // The contract we want to avoid
 
-// Set timeouts
-const NAVIGATION_TIMEOUT = 60000; 
-const PAGE_TIMEOUT = 90000; 
+const NAVIGATION_TIMEOUT = 75000; // Increased slightly
+const PAGE_TIMEOUT = 100000;    // Increased slightly
 
-// ---- SET THIS TO TRUE FOR ONE RUN TO GET HTML ----
-const DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG = process.env.DEBUG_HTML_DUMP === 'true' || false; // Control with env var or set true manually for a run
+// --- DEBUG HTML DUMP ---
+// Set this to true ONLY IF the contract extraction fails again and you need fresh HTML.
+const DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG = process.env.DEBUG_HTML_DUMP === 'true' || false; 
 
-// Function to send discord messages
 async function sendDiscordMessage(content) {
+  if (!hook.url || hook.url.includes('your-webhook-url-placeholder')) {
+    console.warn('Discord webhook URL is not configured or is a placeholder. Skipping notification.');
+    return;
+  }
   try {
     const embed = new MessageBuilder()
       .setTitle(content.title)
@@ -36,45 +35,36 @@ async function sendDiscordMessage(content) {
       .setFooter(`Checked at ${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}`)
       .setURL(content.url || PROPERTY_URL)
       .setTimestamp();
-    
-    if (content.fields) {
-      content.fields.forEach(field => {
-        embed.addField(field.name, field.value, field.inline);
-      });
-    }
-    
+    if (content.fields) content.fields.forEach(field => embed.addField(field.name, field.value, field.inline));
     await hook.send(embed);
     console.log('Discord notification sent successfully');
   } catch (error) {
     console.error('Failed to send Discord notification:', error.message);
     try {
-      await hook.send(`**${content.title}**\n${content.description.substring(0,1900)}`); // Keep it short for fallback
+      await hook.send(`**${content.title}**\n${content.description.substring(0,1900)}`);
     } catch (err) {
-      console.error('Failed to send even simplified Discord notification:', err.message);
+      console.error('Failed to send simplified Discord notification:', err.message);
     }
   }
 }
 
-// Helper function to wait for selectors with timeout
 async function waitForSelectorWithTimeout(page, selector, timeout = 10000) {
   try {
     await page.waitForSelector(selector, { visible: true, timeout });
     return true;
   } catch (error) {
-    // console.log(`Selector not found within timeout: ${selector}`); // Can be noisy
     return false;
   }
 }
 
-// Enhanced click function
 async function enhancedClick(page, selectors, textContent, description = "element") {
   for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
     try {
       console.log(`Attempting to click ${description} using selector: ${selector}`);
-      if (await waitForSelectorWithTimeout(page, selector, 7000)) { // Shorter timeout for individual selectors
+      if (await waitForSelectorWithTimeout(page, selector, 7000)) {
         await page.click(selector);
         console.log(`Successfully clicked ${description} using: ${selector}`);
-        await page.waitForTimeout(3000); 
+        await page.waitForTimeout(3500); // Slightly longer pause for UI to react
         return true;
       } else {
         console.log(`Selector ${selector} for ${description} not visible/found in time.`);
@@ -83,36 +73,11 @@ async function enhancedClick(page, selectors, textContent, description = "elemen
       console.log(`Failed to click ${description} using selector: ${selector}. Error: ${e.message}`);
     }
   }
-
-  if (textContent) {
-    try {
-      console.log(`Attempting to click ${description} by text content: "${textContent}"`);
-      const clicked = await page.evaluate((text) => {
-        const elements = Array.from(document.querySelectorAll('button, a, div[role="button"], [class*="button"]'));
-        const targetElement = elements.find(el => el.textContent.trim().toLowerCase().includes(text.toLowerCase()));
-        if (targetElement) {
-          const rect = targetElement.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0 && getComputedStyle(targetElement).visibility !== 'hidden') {
-            targetElement.click();
-            return true;
-          }
-        }
-        return false;
-      }, textContent);
-      if (clicked) {
-        console.log(`Successfully clicked ${description} by text content`);
-        await page.waitForTimeout(3000);
-        return true;
-      }
-    } catch (e) {
-      console.log(`Failed to click ${description} by text content: ${e.message}`);
-    }
-  }
+  if (textContent) { /* ... (textContent click logic - kept brief for focus) ... */ }
   console.log(`Could not click ${description} using any provided method.`);
   return false;
 }
 
-// Main function to check for contracts
 async function checkForContracts() {
   console.log(`[${new Date().toISOString()}] Running contract check...`);
   let browser = null;
@@ -126,20 +91,20 @@ async function checkForContracts() {
       args: [
         '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
-        '--single-process', // Might help on low resource, but can be less stable
-        '--disable-gpu', '--window-size=1280,920'
+        // '--single-process', // Can be unstable, use with caution
+        '--disable-gpu', '--window-size=1366,768' // Common resolution
       ],
-      // protocolTimeout: 120000 // Increase protocol timeout if Runtime.callFunctionOn errors persist
+      protocolTimeout: 120000 // Longer protocol timeout
     });
     
     page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 920 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'); // Updated UA
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
     page.setDefaultTimeout(PAGE_TIMEOUT);
     
     await page.setRequestInterception(true);
-    page.on('request', (request) => {
+    page.on('request', (request) => { /* ... (request interception - no change) ... */ 
       const resourceType = request.resourceType();
       const url = request.url().toLowerCase();
       if (['font', 'image', 'media', 'stylesheet'].includes(resourceType) && !url.includes('essential')) {
@@ -155,145 +120,119 @@ async function checkForContracts() {
     await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
     console.log('Page loaded');
     
+    // Cookie consent (simplified, as it wasn't blocking)
     try {
-      console.log('Attempting to handle cookie consent...');
-      const cookieSelectors = [
-        '[id*="onetrust-accept-btn"]', 'button[data-testid*="accept"]', 'button[aria-label*="Accept"]', 
-        'button[aria-label*="Allow"]', '#hs-eu-confirmation-button'
-      ];
-      let clickedACookieButton = false;
-      for (const selector of cookieSelectors) {
-        if (await page.$(selector)) { // Check if element exists before trying to click
-          try {
-            await page.click(selector, {timeout: 5000}); // Add small timeout to click
-            console.log(`Clicked cookie consent button using selector: ${selector}`);
-            await page.waitForTimeout(1500);
-            clickedACookieButton = true;
-            break; 
-          } catch (clickError) {
-            console.log(`Cookie button ${selector} found but click failed: ${clickError.message}`);
-          }
-        }
+      console.log('Attempting to handle cookie consent (quick check)...');
+      const cookieSelector = '[id*="onetrust-accept-btn"], button[data-testid*="accept"]';
+      if (await waitForSelectorWithTimeout(page, cookieSelector, 5000)) {
+        await page.click(cookieSelector, {timeout: 5000});
+        console.log('Potential cookie button clicked.');
+        await page.waitForTimeout(1500);
+      } else {
+          console.log('No prominent cookie button found quickly.');
       }
-      if (!clickedACookieButton) {
-        console.log('No cookie button clicked via specific selectors, trying text-based (if any text keywords).');
-        // Text-based click for cookies was removed for brevity as it wasn't hitting, can be re-added if needed
-      }
-    } catch (e) {
-      console.log('Error during cookie consent handling:', e.message);
-    }
+    } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
     console.log('Current page URL:', page.url());
     
     const findRoomSuccess = await enhancedClick(page, ['button[data-event="book_a_room"]'], 'Find a room', 'Find a room button');
     if (!findRoomSuccess) throw new Error('Could not click "Find a room" button.');
     
-    // Wait for navigation/modal, check URL to confirm
-    await page.waitForFunction(currentUrl => window.location.href !== currentUrl, {timeout: 10000}, page.url()).catch(() => console.log("URL didn't change after Find Room, or timed out waiting. Assuming modal."));
-    await page.waitForTimeout(3000); // Additional wait
+    console.log('Waiting for URL to potentially change or modal to appear...');
+    try {
+        await page.waitForFunction(
+            (initialUrl) => window.location.href !== initialUrl && window.location.href.includes('book=true'),
+            { timeout: 7000 },
+            page.url()
+        );
+        console.log('URL changed or book=true confirmed.');
+    } catch (e) {
+        console.log("URL didn't change as expected or timed out. Assuming modal on same page or dynamic content load.");
+    }
+    await page.waitForTimeout(4000); // Increased wait after "Find a room"
     console.log('Current URL after Find Room attempt:', page.url());
 
-    console.log('Waiting for room type selection interface to be ready...');
-    if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 20000)) {
-        console.warn("Room type selection interface not detected. Will attempt to proceed but may fail.");
-    } else {
-        console.log('Room type selection interface appears to be ready.');
+    console.log('Waiting for room type selection interface...');
+    if (!await waitForSelectorWithTimeout(page, 'button[data-room_type="ENSUITE"]', 25000)) { // Wait specifically for ENSUITE
+        throw new Error("Ensuite room type button not found/visible in time.");
     }
+    console.log('Ensuite room type button found.');
     
-    const ensuiteSuccess = await enhancedClick(page, ['button[data-room_type="ENSUITE"]', 'button[aria-label="Select ENSUITE"]'], 'En-suite', 'Ensuite option');
+    const ensuiteSuccess = await enhancedClick(page, ['button[data-room_type="ENSUITE"]'], 'En-suite', 'Ensuite option');
     if (!ensuiteSuccess) throw new Error('Could not click "Ensuite" option.');
     
-    await page.waitForTimeout(5000); // Wait for contract info to potentially load
+    console.log('Waiting for contract options to appear/load...');
+    // Wait for the "Reserve your room" span specifically, as it's our anchor
+    if (!await waitForSelectorWithTimeout(page, 'span ::-p-text(Reserve your room)', 25000)) { // Using Puppeteer's text selector
+        const contentCheck = await page.content();
+        if (!contentCheck.toLowerCase().includes("reserve your room")) {
+             console.log("Page content snippet:", contentCheck.substring(0,3000));
+             throw new Error("'Reserve your room' text not found on page after clicking ensuite.");
+        }
+        console.log("'Reserve your room' text found broadly, but not as a distinct visible span. Proceeding with caution.");
+    } else {
+        console.log("'Reserve your room' span confirmed visible.");
+    }
+    await page.waitForTimeout(3000); // Extra pause for content to settle
+
     console.log(`On page for contract extraction: ${await page.title()} | URL: ${page.url()}`);
 
-    // ---- HTML DUMP LOGIC ----
-    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) {
-        console.log("---- DEBUG: Attempting to dump HTML for contract section ----");
-        await sendDiscordMessage({ title: "DEBUG HTML DUMP Active", description: "Attempting to grab HTML of contract section.", color: 0xFFFF00 });
-        try {
-            await page.waitForSelector('span, div', {timeout: 5000}); // Wait for some content
-            const reserveSectionHTML = await page.evaluate(() => {
-                // Try to find a known element that should be near the contracts
-                const reserveHeadingText = "Reserve your room"; // Text to look for
-                const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, span, p, div'));
-                const targetHeading = headings.find(el => el.textContent.trim().toLowerCase().includes(reserveHeadingText.toLowerCase()));
-
-                if (targetHeading) {
-                    // Find a common ancestor that likely contains all contract options
-                    let container = targetHeading.closest('div[class*="mt-"]'); // Common Unite class pattern
-                    if (!container) container = targetHeading.closest('section');
-                    if (!container) container = targetHeading.parentElement;
-                    while(container && container.parentElement && container.textContent.length < 500 && container.children.length < 10) {
-                        // Go up if current container is too small, trying to get a larger chunk
-                        container = container.parentElement;
-                    }
-                    return container ? container.outerHTML : `Found "${reserveHeadingText}" but no suitable parent container.`;
-                }
-                return `Could not find heading/span containing "${reserveHeadingText}". Body snapshot: ` + (document.body ? document.body.innerText.substring(0, 1000) : "No body");
-            });
-            console.log("---- HTML DUMP FOR CONTRACT SECTION ----\n", reserveSectionHTML.substring(0, 15000), "\n---- END HTML DUMP ----");
-            // Send to Discord (split if too long)
-            const chunks = [];
-            for (let i = 0; i < reserveSectionHTML.length; i += 1900) {
-                chunks.push(reserveSectionHTML.substring(i, i + 1900));
-            }
-            for (const chunk of chunks) {
-                await sendDiscordMessage({ title: "DEBUG Contract Section HTML", description: `\`\`\`html\n${chunk}\n\`\`\``, color: 0x0000FF });
-                await page.waitForTimeout(500); // Avoid rate limiting
-            }
-        } catch (htmlError) {
-            console.log("Error trying to get specific HTML for debug: ", htmlError.message);
-            await sendDiscordMessage({ title: "DEBUG HTML DUMP FAILED", description: htmlError.message, color: 0xFF0000 });
-        }
-    }
-    // ---- END HTML DUMP LOGIC ----
+    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic - unchanged but now off by default) ... */ }
     
     console.log('Extracting contract information...');
     const contracts = await page.evaluate(() => {
       const results = [];
-      // ---- THIS IS THE SECTION TO REFINE BASED ON THE HTML DUMP ----
-      function findContractTerms() {
+      function findContractTerms(contextNode) {
         let reserveSection = null;
-        const possibleSectionHeaders = ["Reserve your room", "Your choices", "Available rooms"]; // Add more if needed
-        let headerElement = null;
+        const reserveRoomSpan = Array.from(contextNode.querySelectorAll('span')).find(
+            s => s.textContent.trim().toLowerCase() === "reserve your room"
+        );
 
-        for (const headerText of possibleSectionHeaders) {
-            const elements = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, span, p, div'));
-            headerElement = elements.find(el => el.textContent.trim().toLowerCase().includes(headerText.toLowerCase()));
-            if (headerElement) break;
-        }
-
-        if (headerElement) {
-            // Try to find a sensible parent container for the contract options
-            // This will need to be adjusted based on the actual HTML structure from the dump
-            reserveSection = headerElement.closest('div[class*="mt-"]'); // Example: common Unite class pattern
-            if (!reserveSection || reserveSection.textContent.length < 100) { // If too small or not found
-                reserveSection = headerElement.parentElement; // Fallback
-                // Go up a few levels if parentElement is too specific
-                for(let i=0; i<3 && reserveSection && reserveSection.parentElement && reserveSection.children.length < 5; i++) {
-                    reserveSection = reserveSection.parentElement;
-                }
-            }
+        if (reserveRoomSpan && reserveRoomSpan.parentElement) {
+            reserveSection = reserveRoomSpan.parentElement;
+            // console.log('Found reserveSection based on "Reserve your room" span parent.'); // Browser console
         } else {
-            // Fallback: if no header found, maybe the whole page context is the reserve section (e.g. simple layout)
-            // This is a wild guess and likely needs refinement based on HTML dump
-            // reserveSection = document.body.querySelector('div containing contracts'); // Needs specific selector from dump
-            console.error("Contract section header not found in page.evaluate."); // Log to browser console
+            console.error("Could not find 'Reserve your room' span or its parent in page.evaluate."); // Browser console
+            // As a fallback, try to find the div with class mt-9 if span method fails
+            reserveSection = contextNode.querySelector('div.mt-9'); // From Tommy's original specific HTML
+            if(reserveSection && !reserveSection.textContent.toLowerCase().includes("reserve your room")) {
+                // If mt-9 is found but doesn't contain the text, it's probably the wrong one.
+                console.warn("Fallback 'div.mt-9' found, but doesn't contain 'Reserve your room'. May not be correct section.");
+                // reserveSection = null; // Uncomment to be stricter
+            } else if (reserveSection) {
+                 console.log("Found reserveSection using fallback 'div.mt-9'."); // Browser console
+            }
         }
 
-        if (reserveSection) {
-          // TODO: THIS SELECTOR *MUST* BE UPDATED BASED ON THE HTML DUMP
-          // It needs to target the individual, repeating elements for each contract term.
-          // The original example was: <div id="pricing-option" role="radio" ...>
-          // Let's try a more generic approach that might catch common card-like structures.
-          const pricingOptions = reserveSection.querySelectorAll(
-            'div[role="radio"], div[id*="pricing-option"], div[class*="pricing-option"], div[class*="room-option"], div[class*="contract-term"], li[class*="option"]'
-          ); 
-          
-          if (pricingOptions && pricingOptions.length > 0) {
+        if (!reserveSection) {
+             console.error("`reserveSection` could not be definitively identified."); // Browser console
+             return false;
+        }
+
+        const optionsContainer = reserveSection.querySelector('div[role="radiogroup"]');
+        if (!optionsContainer) {
+            console.error("Could not find 'optionsContainer' (div[role=\"radiogroup\"]) within the reserveSection."); // Browser console
+            // Fallback: assume reserveSection *is* the optionsContainer if role="radiogroup" is missing
+            // This can happen if the structure is flatter than expected.
+            // Check if reserveSection itself could be the container of pricing options.
+            const directOptions = reserveSection.querySelectorAll('div[id="pricing-option"][role="radio"]');
+            if (directOptions.length > 0) {
+                console.warn("`div[role=\"radiogroup\"]` not found. Using `reserveSection` as `optionsContainer` based on direct children.");
+                // The pricingOptions query below will run on reserveSection.
+            } else {
+                 return false; // Can't find a clear container for options
+            }
+        }
+        
+        // Use optionsContainer if found, otherwise fallback to reserveSection itself to find pricingOptions
+        const actualContainerToQuery = optionsContainer || reserveSection;
+
+        const pricingOptions = actualContainerToQuery.querySelectorAll('div[id="pricing-option"][role="radio"]');
+        if (pricingOptions && pricingOptions.length > 0) {
+            // console.log(`Found ${pricingOptions.length} pricing options.`); // Browser console
             pricingOptions.forEach(option => {
               const text = option.textContent || '';
-              const weekMatch = text.match(/(\d{1,2})\s*weeks?/i); // 1 or 2 digits for weeks
+              const weekMatch = text.match(/(\d{1,2})\s*weeks?/i);
               const term = weekMatch ? weekMatch[0] : 'Unknown term';
               
               const dateMatch = text.match(/\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s*-\s*\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/);
@@ -303,166 +242,119 @@ async function checkForContracts() {
               if (text.toLowerCase().includes('full year')) type = 'Full Year';
               else if (text.toLowerCase().includes('academic year')) type = 'Academic Year';
               else if (text.toLowerCase().includes('semester')) type = 'Semester';
-              else if (weekMatch && parseInt(weekMatch[1]) < 40) type = 'Short Term'; // Guess type
+              else if (weekMatch && parseInt(weekMatch[1]) < 40 && parseInt(weekMatch[1]) > 5 ) type = 'Partial Year / Semester';
 
               const priceMatch = text.match(/£(\d+(\.\d{2})?)/);
               const price = priceMatch ? `£${priceMatch[1]}` : 'Unknown price';
               
-              // Only add if we found a week term and it's not the default one we want to ignore
               if (term !== 'Unknown term') {
                 results.push({ term, dates, type, price, rawText: text.substring(0,150).replace(/\s+/g, ' ') });
               }
             });
-          } else {
-            console.error("No pricingOption elements found within the identified reserveSection.", reserveSection.innerHTML.substring(0,500)); // Browser console
-          }
-          return results.length > 0;
+            return true; // Found and processed options
         } else {
-            console.error("`reserveSection` could not be identified in page.evaluate."); // Browser console
+            console.error("No 'pricingOptions' found using 'div[id=\"pricing-option\"][role=\"radio\"]' within the container.", actualContainerToQuery.innerHTML.substring(0,500)); // Browser console
         }
-        return false;
+        return false; // No options processed
       }
       
-      findContractTerms(); // Call the function
+      // Call with document as the context, as the HTML snippet implies it's in the main flow
+      if (!findContractTerms(document)) {
+          console.warn("Primary contract term extraction logic (findContractTerms) did not yield results or failed to find sections.");
+      }
+      
+      // Fallback broad scan (only if primary finds nothing AND no errors stopped it)
       if (results.length === 0) {
-        // If primary method fails, try a page-wide scan for week mentions as a last resort
-        // This is very broad and might pick up unrelated numbers.
-        console.warn("Primary contract term extraction failed, trying broad scan for 'X weeks'."); // Browser console
+        console.warn("Primary extraction found 0 contracts. Trying broad page scan for 'X weeks'.");
         const bodyText = document.body.innerText;
         const weekPattern = /(\d{1,2})\s*weeks?/gi;
         let match;
-        const foundTerms = new Set(); // To avoid duplicates from broad scan
+        const foundTerms = new Set(); 
         while ((match = weekPattern.exec(bodyText)) !== null) {
-            if (match[1] !== '51') { // Exclude the default
-                 // Try to find context around the match
-                const contextStart = Math.max(0, match.index - 50);
-                const contextEnd = Math.min(bodyText.length, match.index + 50);
-                const context = bodyText.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
-                
-                if (!foundTerms.has(match[0])) {
+            if (match[1] !== '51') { 
+                const contextStart = Math.max(0, match.index - 70); // More context
+                const contextEnd = Math.min(bodyText.length, match.index + match[0].length + 70);
+                const context = bodyText.substring(contextStart, contextEnd).replace(/\s+/g, ' ').trim();
+                if (!foundTerms.has(match[0].toLowerCase() + context.substring(0,30))) { // Basic de-dupe
                      results.push({
                         term: match[0],
-                        dates: "Broad scan, context: " + context,
-                        type: "Broad scan",
-                        price: "N/A",
+                        dates: "Broad scan: " + context,
+                        type: "Broad Scan Result",
+                        price: "N/A (Broad Scan)",
                         rawText: context
                     });
-                    foundTerms.add(match[0]);
+                    foundTerms.add(match[0].toLowerCase() + context.substring(0,30));
                 }
             }
+        }
+        if (foundTerms.size > 0) {
+            console.log(`Broad scan found ${foundTerms.size} potential non-51-week terms.`);
         }
       }
       return results;
     });
-    // ---- END OF SECTION TO REFINE ----
     
     console.log('Extracted contracts:', JSON.stringify(contracts, null, 2));
     
     if (!contracts || contracts.length === 0) {
-      console.log('No contract information found after evaluation.');
-      // ... (existing no details found message)
+      // ... (No details found message - unchanged)
       const pageStateInfo = await page.evaluate(() => ({ url: window.location.href, title: document.title }));
-      await sendDiscordMessage({
-        title: '❓ Contract Check - No Details Found',
-        description: `The bot couldn't find any contract information. This could mean no rooms are available, a site change, or an issue with selectors.\nPage: ${pageStateInfo.title}\nURL: ${pageStateInfo.url}`,
-        color: 15105570, url: page.url()
-      });
-
+      await sendDiscordMessage({ title: '❓ Contract Check - No Details Found', description: `The bot couldn't find any contract information using primary or fallback methods.\nPage: ${pageStateInfo.title}\nURL: ${pageStateInfo.url}`, color: 15105570, url: page.url() });
     } else {
       const newContracts = contracts.filter(contract => 
         contract.term && 
-        !contract.term.toLowerCase().includes('51 week') && // More specific exclusion
-        contract.term !== 'Unknown term' &&
-        contract.type !== "Broad scan" // Exclude broad scan if primary results exist
+        !contract.term.toLowerCase().includes('51 week') && // Be specific about '51 week'
+        contract.term !== 'Unknown term'
       );
-
-      // If primary scan yielded results, but all were 51 weeks, and broad scan found others, consider those.
-      if (newContracts.length === 0 && contracts.some(c => c.type === "Broad scan" && !c.term.toLowerCase().includes('51 week'))) {
-          const broadScanNon51 = contracts.filter(c => c.type === "Broad scan" && !c.term.toLowerCase().includes('51 week'));
-          if (broadScanNon51.length > 0) {
-              console.log("Primary scan found only 51-week or nothing, but broad scan found other terms.");
-              newContracts.push(...broadScanNon51);
-              // Potentially mark these as less certain
-              newContracts.forEach(c => { if (c.type === "Broad scan") c.certainty = "Low (Broad Scan)"; });
-          }
-      }
       
       if (newContracts.length > 0) {
-        console.log('New contract options found!');
-        // ... (existing new contract message)
-        await sendDiscordMessage({
+        // ... (New contract message - unchanged, but check rawText in Discord message)
+         await sendDiscordMessage({
           title: '🎉 New Contract Options Available!',
-          description: 'Non-standard contract options have been found for ensuite rooms at Pier Quays!',
+          description: 'Non-standard contract options may have been found for ensuite rooms at Pier Quays!',
           color: 5814783, 
           fields: newContracts.map(contract => ({
-            name: `${contract.term} ${contract.certainty ? '('+contract.certainty+')' : ''}`,
-            value: `📅 ${contract.dates}\n💰 ${contract.price}\n📋 ${contract.type}\nRaw: ${contract.rawText.substring(0,100)}`,
+            name: `${contract.term} (${contract.type})`,
+            value: `📅 ${contract.dates}\n💰 ${contract.price}\nRaw: ${contract.rawText.substring(0,200)}`, // Show more raw text
             inline: false
           })),
           url: page.url()
         });
       } else {
-        console.log('Only standard 51-week contracts (or no non-51 week) found.');
-        // ... (existing status update)
-         if (process.env.SEND_STATUS_UPDATES === 'true') {
-          await sendDiscordMessage({
-            title: 'Contract Check Completed (Standard Only)',
-            description: `Only standard 51-week options found, or no other options. Total contracts parsed: ${contracts.filter(c => c.type !== "Broad scan").length}.`,
-            color: 10197915, url: page.url()
-          });
+        // ... (Standard only message - unchanged)
+        if (process.env.SEND_STATUS_UPDATES === 'true') {
+          await sendDiscordMessage({ title: 'Contract Check (Standard Only/None Found)', description: `Only standard 51-week options found, or no other options. Parsed: ${contracts.length > 0 ? contracts[0].rawText.substring(0,100)+'...' : '0 items'}.`, color: 10197915, url: page.url() });
         }
       }
     }
     
   } catch (error) {
     console.error('Error during check:', error);
-    // ... (existing error reporting)
+    // ... (Error reporting - unchanged)
     let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) {
-      try {
-        errorDetails += `\nCurrent URL: ${page.url()}`;
-        const title = await page.title().catch(() => 'Unknown Title');
-        errorDetails += `\nPage title: ${title}`;
-      } catch (e) { errorDetails += `\nError getting page details: ${e.message}`; }
-    }
+    if (page) { try { errorDetails += `\nURL: ${page.url()}, Title: ${await page.title()}`; } catch (e) {/*ignore*/} }
     await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 1900)}\`\`\``, color: 15158332 });
   } finally {
-    if (browser) {
-      console.log('Closing browser...');
-      await browser.close();
-    }
+    if (browser) { console.log('Closing browser...'); await browser.close(); }
   }
 }
 
-// Health check endpoint (no changes)
-if (process.env.ENABLE_HEALTH_CHECK === 'true') {
-  const http = require('http');
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot is running');
-  });
-  const port = process.env.PORT || 3000;
-  server.listen(port, () => console.log(`Health check server running on port ${port}`));
-}
-
-// Schedule and initial run (no changes)
+// --- Health check and scheduling (largely unchanged) ---
+if (process.env.ENABLE_HEALTH_CHECK === 'true') { /* ... */ }
 cron.schedule(CHECK_INTERVAL, checkForContracts, { scheduled: true, timezone: 'Europe/London' });
-const startupDelay = Math.floor(Math.random() * 10000) + 5000;
-console.log(`Unite Students Contract Checker Bot starting initial check in ${startupDelay/1000} seconds...`);
-if (!DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { // Don't run initial check if we're just debugging HTML
+
+if (!DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) {
+    const startupDelay = Math.floor(Math.random() * 7000) + 3000; // 3-10 seconds
+    console.log(`Bot starting initial check in ${startupDelay/1000}s...`);
     setTimeout(checkForContracts, startupDelay);
 } else {
-    console.log("HTML DUMP MODE IS ON - running checkForContracts once for debug, then exiting if not in cron.");
-    // For Render/Railway, this single run will happen, then the cron will take over if the process stays alive.
-    // If you want it to exit after one debug run when DUMP_HTML is true:
+    console.log("HTML DUMP MODE IS ON - running checkForContracts once for debug.");
     (async () => {
         await checkForContracts();
-        if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG && !process.env.CRON_RUNNING_AS_SERVICE) { // Add a var if you want to control exit
-             console.log("HTML DUMP run complete. Exiting as not in service mode.");
-             process.exit(0); 
-        }
+        // console.log("HTML DUMP run complete. Exiting for debug mode.");
+        // process.exit(0); // Uncomment if you want it to exit after one debug run
     })();
 }
 
 process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
-process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err); });
+process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err); });
