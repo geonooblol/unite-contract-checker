@@ -1,12 +1,11 @@
 // Optimized Unite Students Contract Checker Bot for Railway
 // This version has improved stability on resource-constrained environments
-// Includes enhanced debugging: cookie consent, "Find a room" button (v3 - long wait test), and contract extraction
+// Includes enhanced debugging v4: DUMP_HTML var check, minimal evaluate test during long wait
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const minimalStealth = StealthPlugin();
 
-// Disable the most resource-intensive evasions
 minimalStealth.enabledEvasions.delete('sourceurl');
 minimalStealth.enabledEvasions.delete('media.codecs');
 minimalStealth.enabledEvasions.delete('navigator.plugins');
@@ -17,7 +16,7 @@ const fetch = require('node-fetch');
 const dotenv = require('dotenv');
 dotenv.config();
 
-console.log("Unite Students Bot Starting - Railway Optimized Version (with enhanced debug v3 - Long Wait Test)");
+console.log("Unite Students Bot Starting - Railway Optimized Version (with enhanced debug v4 - Full)");
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
@@ -26,9 +25,10 @@ const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway
 const INITIAL_GOTO_TIMEOUT = 90000;
 const NAVIGATION_TIMEOUT = 180000;
 const PAGE_TIMEOUT = 240000;
-const PROTOCOL_TIMEOUT = 300000;
+const PROTOCOL_TIMEOUT = 300000; 
 
 const DUMP_HTML = process.env.DEBUG_HTML_DUMP === 'true';
+console.log(`DEBUG: Initialized DUMP_HTML variable. Value: ${DUMP_HTML}. (Raw from process.env.DEBUG_HTML_DUMP: "${process.env.DEBUG_HTML_DUMP}")`);
 
 async function sendDiscordMessage(content) {
   if (!DISCORD_WEBHOOK_URL || !DISCORD_WEBHOOK_URL.startsWith('https://discord.com/api/webhooks/')) {
@@ -36,7 +36,7 @@ async function sendDiscordMessage(content) {
     return;
   }
   const payload = {
-    username: "Unite Students Alert (Optimized v3)",
+    username: "Unite Students Alert (Optimized v4)",
     embeds: [{
       title: content.title,
       description: String(content.description).substring(0, 4090),
@@ -54,7 +54,7 @@ async function sendDiscordMessage(content) {
     if (!response.ok) {
       const responseBody = await response.text();
       console.error(`Error sending Discord message: ${response.status} ${response.statusText}. Body: ${responseBody.substring(0, 500)}`);
-    } else { /* console.log('Discord notification sent successfully'); */ } // Quieter success log
+    } else { /* console.log('Discord notification sent successfully'); */ }
   } catch (error) {
     console.error('Exception sending Discord notification:', error.message, error.stack ? error.stack.substring(0,300) : "");
   }
@@ -74,8 +74,7 @@ async function clickElement(page, selectors, textContent, description = "element
     try {
       console.log(`Trying to click ${description} with selector: ${selector}`);
       if (await waitForSelector(page, selector, 12000)) {
-        await page.click(selector);
-        console.log(`Clicked ${description} using: ${selector}`);
+        await page.click(selector); console.log(`Clicked ${description} using: ${selector}`);
         await page.waitForTimeout(3000); return true;
       } else { console.log(`Selector "${selector}" for ${description} not found/visible for clickElement.`); }
     } catch (e) { console.log(`Failed to click ${description} with selector "${selector}": ${e.message.split('\n')[0]}`); }
@@ -114,6 +113,7 @@ async function checkForContracts() {
   console.log(`[${new Date().toISOString()}] Running contract check...`);
   let browser = null;
   let page = null;
+  let isBrowserResponsive = true;
 
   try {
     console.log(`Testing site reachability...`);
@@ -154,7 +154,6 @@ async function checkForContracts() {
     console.log('DEBUG: Entering cookie consent block...');
     try {
       const cookieSelector = '[id*="onetrust-accept-btn-handler"], button[id*="accept"], button[data-testid*="accept"], button[aria-label*="accept all cookies" i], button[class*="accept" i][class*="cookie" i]';
-      // console.log(`DEBUG: Attempting waitForSelector for cookie with selector: ${cookieSelector}`); // Made less verbose
       const cookieFound = await waitForSelector(page, cookieSelector, 7000);
       console.log(`DEBUG: waitForSelector for cookie returned: ${cookieFound}`);
       if (cookieFound) {
@@ -165,46 +164,77 @@ async function checkForContracts() {
     } catch (e) { console.error('DEBUG: Error in cookie consent block:', e.message, e.stack ? e.stack.substring(0, 400) : ''); }
     console.log('DEBUG: Exited cookie consent block.');
 
-    // --- "ARE YOU KIDDING ME?" LONG WAIT TEST for "Find a room" button ---
-    console.log('DEBUG: Starting a 30-second diagnostic static wait, will check for button presence during this...');
+    console.log('DEBUG: Starting a 30-second diagnostic static wait, will check for browser responsiveness and button presence during this...');
     let foundDuringLongWait = false;
-    for (let i = 0; i < 6; i++) { // Check 6 times (every 5 seconds for 30 seconds)
+    for (let i = 0; i < 6; i++) {
         await page.waitForTimeout(5000);
-        console.log(`DEBUG: Long wait check #${i+1} - looking for any button/role=button containing "Find a room" text (and visible via offsetParent)`);
-        const isButtonVisible = await page.evaluate(() => 
+        console.log(`DEBUG: Long wait check #${i+1}`);
+        try {
+            const title = await page.evaluate(() => document.title);
+            console.log(`DEBUG: Minimal evaluate (document.title) responsive. Title: "${title.substring(0,50)}..."`);
+        } catch (evalError) {
+            console.error(`DEBUG: MINIMAL page.evaluate (document.title) FAILED during long wait check #${i+1}. Error: ${evalError.message}`);
+            isBrowserResponsive = false;
+            if (evalError.message.includes('timed out') || evalError.message.includes('Target closed')) {
+                 console.error("DEBUG: Browser seems to have crashed or connection lost. Breaking long wait.");
+                 break;
+            }
+        }
+        if (!isBrowserResponsive) break;
+        console.log(`DEBUG: Looking for any button/role=button containing "Find a room" text (and visible via offsetParent)`);
+        const isButtonVisible = await page.evaluate(() =>
             Boolean(Array.from(document.querySelectorAll('button, [role="button"]'))
-                         .find(el => el.textContent.trim().toLowerCase().includes('find a room') && 
-                                     el.offsetParent !== null && // Basic visibility check
+                         .find(el => el.textContent.trim().toLowerCase().includes('find a room') &&
+                                     el.offsetParent !== null &&
                                      getComputedStyle(el).visibility !== 'hidden' &&
-                                     getComputedStyle(el).display !== 'none' 
+                                     getComputedStyle(el).display !== 'none'
                               )
             )
         );
         if (isButtonVisible) {
             console.log('DEBUG: "Find a room" text found in a visible button-like element during long wait!');
             foundDuringLongWait = true;
-            break; // Exit loop if found
+            break;
         } else {
             console.log('DEBUG: "Find a room" text NOT found in any visible button-like element yet.');
         }
     }
 
+    if (!isBrowserResponsive) {
+        console.error("DEBUG: Browser became unresponsive during the 30s diagnostic wait. Cannot proceed reliably.");
+        if (DUMP_HTML) {
+            try {
+                console.log("DEBUG: DUMP_HTML is true, attempting to get page content for unresponsive browser state...");
+                const pageContentUnresponsive = await page.content();
+                await sendDiscordMessage({
+                    title: "DEBUG - Browser Unresponsive (During 30s Wait)",
+                    description: `Browser became unresponsive. Last URL: ${await page.url()}\nPage HTML (first 2.5KB, if obtainable):\n\`\`\`html\n${pageContentUnresponsive.substring(0,2500)}\n\`\`\``,
+                    color: 0xFF0000
+                });
+            } catch (dumpError) {
+                 await sendDiscordMessage({
+                    title: "DEBUG - Browser Unresponsive AND HTML Dump Failed",
+                    description: `Browser became unresponsive. Could not get page content. Last URL: ${await page.url()}`,
+                    color: 0xFF0000
+                });
+            }
+        }
+        throw new Error("Browser became unresponsive during diagnostic wait.");
+    }
+
     if (!foundDuringLongWait) {
         console.warn('DEBUG: "Find a room" text was NOT found in any visible button-like element even after 30s. Page is likely not loading correctly or button is very different/hidden.');
         if (DUMP_HTML) {
-            console.log("DEBUG: DUMP_HTML is true, attempting to get page content for Discord message...");
+            console.log("DEBUG: DUMP_HTML is true, attempting to get page content for Discord message (button not found after long wait)...");
             const pageContentNoButtonLongWait = await page.content();
             await sendDiscordMessage({
                 title: "DEBUG - 'Find a room' Not Visible (After 30s Wait)",
                 description: `The 'Find a room' button/text was not found after a 30s static wait.\nURL: ${await page.url()}\nPage HTML (first 2.5KB):\n\`\`\`html\n${pageContentNoButtonLongWait.substring(0,2500)}\n\`\`\``,
-                color: 0xFF8C00 // Orange for warning
+                color: 0xFF8C00
             });
-        } else {
-            console.log("DEBUG: DUMP_HTML is false, skipping HTML dump for Discord.");
-        }
+        } else { console.log("DEBUG: DUMP_HTML is false, skipping HTML dump for Discord."); }
     }
     console.log('DEBUG: Finished 30-second diagnostic wait period.');
-    // --- END OF LONG WAIT TEST ---
 
     console.log('Proceeding to click "Find a room" with clickElement function...');
     const findRoomButtonSelectors = [
@@ -233,8 +263,10 @@ async function checkForContracts() {
 
     console.log('Selecting Ensuite room...');
     const ensuiteSelectors = [
-      'button[data-room_type="ENSUITE"]', 'button[aria-label="Select ENSUITE"]',
-      'button[id="room-option-card"] ::-p-text(En-suite)', 'div[role="button"] ::-p-text(En-suite)'
+      'button[data-room_type="ENSUITE"]',
+      'button[aria-label="Select ENSUITE"]',
+      'button[id="room-option-card"] ::-p-text(En-suite)',
+      'div[role="button"] ::-p-text(En-suite)'
     ];
     const ensuiteClicked = await clickElement(page, ensuiteSelectors, 'En-suite', 'Ensuite option');
     if (!ensuiteClicked) {
@@ -254,10 +286,51 @@ async function checkForContracts() {
     await page.waitForTimeout(3000);
 
     console.log('Extracting contract information...');
-    const contracts = await page.evaluate(() => { /* ... (Same contract extraction logic as before) ... */ }); // Keeping this part concise for brevity, assuming it's unchanged
-
-    // ... (Rest of your contract processing and Discord messaging logic from previous version) ...
-    // Make sure to include the full contract extraction and analysis logic here from your last working version of that part
+    const contracts = await page.evaluate(() => {
+      try {
+        const results = [];
+        const reserveRoomBlock = document.querySelector('div.mt-9 div.mt-4');
+        let contractElementsSource = 'Unknown';
+        let contractElements;
+        if (reserveRoomBlock) {
+            contractElements = reserveRoomBlock.querySelectorAll('div[id="pricing-option"], div[role="radio"]');
+            contractElementsSource = 'div.mt-9 div.mt-4 > div[id="pricing-option"], div[role="radio"]';
+        } else {
+            contractElements = Array.from(document.querySelectorAll('div[role="radiogroup"] div[role="radio"], div[data-cy*="price-option"]'));
+            contractElementsSource = 'Fallback: div[role="radiogroup"] div[role="radio"], div[data-cy*="price-option"]';
+            if (contractElements.length === 0) {
+                contractElements = Array.from(document.querySelectorAll('div[role="radio"]'));
+                contractElementsSource = 'Fallback (broad): div[role="radio"]';
+            }
+        }
+        if (!contractElements || contractElements.length === 0) {
+          return [{ error: `No contract elements found. Searched via: ${contractElementsSource}` }];
+        }
+        contractElements.forEach((element, index) => {
+          try {
+            const text = element.textContent.trim().replace(/\s\s+/g, ' ');
+            let weeks = text.match(/(\d+)\s*weeks?/i)?.[1] || 'Unknown';
+            let dates = text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})\s*-\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/)?.[0] || 'Unknown dates';
+            let termMatch = text.match(/(Full Year|Academic Year|Term \d|Semester \d|Short Stay|Summer Let|Full term|Academic term)/i);
+            let term = termMatch ? termMatch[0] : 'Unknown term';
+            if (term === 'Unknown term' && weeks !== 'Unknown') {
+              const numWeeks = parseInt(weeks);
+              if (numWeeks >= 38 && numWeeks <= 52) term = "Full/Academic Year (inferred)";
+              else if (numWeeks >= 10 && numWeeks < 38) term = "Term/Semester (inferred)";
+              else if (numWeeks < 10 && numWeeks > 0) term = "Short Term (inferred)";
+            }
+            let price = text.match(/£(\d+)(?:\.\d{2})?/)?.[1] || 'Unknown price';
+            results.push({ source: `Element ${index+1} from ${contractElementsSource}`, weeks, dates, term, price, rawText: text.substring(0, 250) });
+          } catch (innerError) {
+            results.push({ error: `Error parsing individual contract element: ${innerError.message}`, rawText: element.textContent.trim().substring(0, 100) });
+          }
+        });
+        if (results.length === 0) return [{ error: `Contract elements selected via "${contractElementsSource}", but no data extracted.` }];
+        return results;
+      } catch (evaluateError) {
+        return [{ error: `Main page.evaluate error for contracts: ${evaluateError.message}` }];
+      }
+    });
 
     console.log('Extracted contracts:', JSON.stringify(contracts, null, 2));
 
@@ -269,12 +342,12 @@ async function checkForContracts() {
       const pageContentForError = DUMP_HTML ? await page.content() : "";
       await sendDiscordMessage({
         title: "⚠️ Contract Checking Issue",
-        description: `${errorDesc}\nURL: ${await page.url()}${DUMP_HTML && pageContentForError ? `\nPage HTML (start):\n\`\`\`html\n${pageContentForError.substring(0,1000)}\n\`\`\`` : ""}`,
+        description: `${errorDesc}\nURL: ${await page.url()}${DUMP_HTML && pageContentForError ? `\nPage HTML (start):\n\`\`\`html\n${pageContentForError.substring(0,1000)}\n\`\`\`` : (DUMP_HTML ? "\n(HTML dump attempted but content was empty or failed)" : "\n(HTML dump disabled)")}`,
         color: 0xFFA500
       });
     } else {
-      const nonStandardContracts = contracts.filter(c => c.weeks !== '51' && c.weeks !== 'Unknown' && !c.error && c.term && !c.term.toLowerCase().includes('full year'));
-      const standardContracts = contracts.filter(c => (c.weeks === '51' || (c.term && c.term.toLowerCase().includes('full year'))) && !c.error);
+      const nonStandardContracts = contracts.filter(c => c.weeks !== '51' && c.weeks !== 'Unknown' && !c.error && c.term && !c.term.toLowerCase().includes('full year') && parseInt(c.weeks) < 50);
+      const standardContracts = contracts.filter(c => (c.weeks === '51' || (c.term && c.term.toLowerCase().includes('full year')) || parseInt(c.weeks) >= 50) && !c.error);
       if (nonStandardContracts.length > 0) {
         await sendDiscordMessage({
           title: "🎉 Alternative Contract Options Found!",
@@ -283,19 +356,29 @@ async function checkForContracts() {
           color: 0x00FF00, url: await page.url()
         });
       } else {
-        console.log('No alternative (non-51 week / non-Full Year) contracts found this time.');
+        console.log('No alternative (non-51 week / non-Full Year / <50w) contracts found this time.');
         const contractsInfo = standardContracts.length > 0 ? standardContracts.map(c => `${c.weeks}w (${c.term}) £${c.price}`).join(' | ') : "No specific contract details parsed, but no errors or alternatives.";
         if (DUMP_HTML) {
           await sendDiscordMessage({ title: "Contract Check Completed (Standard Only)", description: `Only standard contracts found: ${contractsInfo}`, color: 0x0099FF });
         }
       }
     }
-
   } catch (error) {
-    console.error('Error during check (Outer Catch):', error.message, error.stack ? error.stack.substring(0, 700) : '');
+    console.error('Error during check (Outer Catch):', error.message, error.stack ? error.stack.substring(0, 1000) : '');
     let errorDescription = `Main error: ${error.message}`;
     if (page) { try { errorDescription += `\nLast URL: ${await page.url()}`; } catch { errorDescription += "\nCould not get last URL."} }
-    if (DUMP_HTML && page) { try { const errorHtml = await page.content(); errorDescription += `\nPage HTML (start of error state):\n\`\`\`html\n${errorHtml.substring(0,1000)}\n\`\`\``; } catch (htmlError) { errorDescription += `\n(Could not get page HTML at error: ${htmlError.message})`; } }
+    if (DUMP_HTML && page) {
+        console.log("DEBUG: Outer catch, DUMP_HTML is true. Attempting to get page content for error message...");
+        try {
+            const errorHtml = await page.content();
+            errorDescription += `\nPage HTML (start of error state, if obtainable):\n\`\`\`html\n${errorHtml.substring(0,1500)}\n\`\`\``;
+        } catch (htmlError) {
+            errorDescription += `\n(Could not get page HTML at error: ${htmlError.message}. Browser might be unresponsive.)`;
+            console.error("DEBUG: Failed to get HTML content in outer catch:", htmlError.message);
+        }
+    } else if (!DUMP_HTML) {
+        errorDescription += "\n(HTML dump disabled)";
+    }
     await sendDiscordMessage({ title: '❌ Bot Error (Main)', description: errorDescription.substring(0, 4000), color: 0xFF0000 });
   } finally {
     if (browser) { console.log("Closing browser..."); await browser.close(); }
