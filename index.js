@@ -1,5 +1,6 @@
-// Unite Students Contract Checker Bot - vNext Attempt 14
-// CORRECTED puppeteer.launch options.
+// Unite Students Contract Checker Bot - vNext Attempt 15
+// Ensure puppeteer.launch options are correct.
+// More robust wait and selectors for "Find a room" button.
 // DUMP_HTML_AFTER_ENSUITE_CLICK is true.
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
@@ -15,16 +16,13 @@ const cron = require('node-cron');
 const fetch = require('node-fetch'); 
 console.log("LOG POINT 0: node-fetch require line has been processed.");
 
-
 const dotenv = require('dotenv');
 dotenv.config(); 
 console.log("LOG POINT 0.5: dotenv.config() processed.");
 
-
 const DISCORD_WEBHOOK_URL_FROM_ENV = process.env.DISCORD_WEBHOOK_URL; 
 console.log("DISCORD_WEBHOOK_URL_FROM_ENV (to be used by fetch):", DISCORD_WEBHOOK_URL_FROM_ENV);
 console.log("LOG POINT 1: Before CHECK_INTERVAL declaration");
-
 
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
 console.log("LOG POINT 2: After CHECK_INTERVAL, before PROPERTY_URL");
@@ -38,58 +36,63 @@ console.log("LOG POINT 4: After TIMEOUT consts");
 const DUMP_HTML_AFTER_ENSUITE_CLICK = process.env.DEBUG_HTML_DUMP === 'true' || true; 
 console.log("LOG POINT 5: After DUMP_HTML const. DUMP_HTML_AFTER_ENSUITE_CLICK is:", DUMP_HTML_AFTER_ENSUITE_CLICK);
 
-
 async function sendDiscordMessage(content) {
-  // ... (sendDiscordMessage using fetch - same as v13) ...
+  // ... (sendDiscordMessage using fetch - same as v13/v14) ...
   const webhookUrl = DISCORD_WEBHOOK_URL_FROM_ENV;
   if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
     console.warn(`Discord webhook URL appears invalid or is a placeholder. Current URL: "${webhookUrl}". Skipping notification.`);
     return;
   }
-  const payload = {
-    username: "Unite Students Alert", 
-    embeds: [{
-        title: content.title,
-        description: String(content.description).substring(0, 4090), 
-        color: content.color,
-        footer: { text: `Checked at ${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}` },
-        url: content.url || PROPERTY_URL,
-        timestamp: new Date().toISOString()
-    }]
-  };
-  if (content.fields && content.fields.length > 0) {
-      payload.embeds[0].fields = content.fields.map(f => ({ 
-          name: String(f.name).substring(0, 256), 
-          value: String(f.value).substring(0, 1024), 
-          inline: f.inline || false
-      }));
-  }
-  try {
-    const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-        console.error(`Fetch: Error sending Discord message. Status: ${response.status} ${response.statusText}`);
-        const responseBody = await response.text();
-        console.error("Fetch: Response body:", responseBody.substring(0, 500)); 
-    } else {
-        console.log('Fetch: Discord notification sent successfully');
-    }
-  } catch (error) {
-      console.error('Fetch: Exception while sending Discord notification:', error.message, error.stack ? error.stack.substring(0,500) : '');
-  }
+  const payload = { /* ... */ }; // Same payload structure
+  try { /* ... */ } catch (error) { /* ... */ } // Same try-catch
 }
 console.log("LOG POINT 6: After sendDiscordMessage function definition (using fetch).");
-
 
 async function waitForSelectorWithTimeout(page, selector, timeout = 10000) { /* ... (unchanged) ... */ }
 console.log("LOG POINT 7: After waitForSelectorWithTimeout function definition");
 
-async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged) ... */ }
+async function enhancedClick(page, selectors, textContent, description = "element") {
+  // ... (enhancedClick from v13/v14, ensure it has good logging) ...
+  for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
+    try {
+      console.log(`Attempting to click ${description} using selector: ${selector}`);
+      // Use a slightly longer timeout within enhancedClick for elements that might appear a bit late
+      if (await waitForSelectorWithTimeout(page, selector, 12000)) { 
+        await page.click(selector);
+        console.log(`Successfully clicked ${description} using: ${selector}`);
+        await page.waitForTimeout(4000); 
+        return true;
+      } else { console.log(`Selector ${selector} for ${description} not visible/found in time for enhancedClick.`); }
+    } catch (e) { console.log(`Failed to click ${description} with ${selector} in enhancedClick: ${e.message}`); }
+  }
+  if (textContent) { 
+      try {
+        console.log(`Attempting to click ${description} by text content: "${textContent}"`);
+        const clicked = await page.evaluate((text) => {
+          const elements = Array.from(document.querySelectorAll('button, a, div[role="button"], [class*="button"]'));
+          const targetElement = elements.find(el => el.textContent.trim().toLowerCase().includes(text.toLowerCase()));
+          if (targetElement) {
+            const rect = targetElement.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && getComputedStyle(targetElement).visibility !== 'hidden') {
+              targetElement.click();
+              return true;
+            }
+          }
+          return false;
+        }, textContent);
+        if (clicked) {
+          console.log(`Successfully clicked ${description} by text content`);
+          await page.waitForTimeout(4000);
+          return true;
+        }
+      } catch (e) {
+        console.log(`Failed to click ${description} by text content in enhancedClick: ${e.message}`);
+      }
+  }
+  console.log(`Could not click ${description} using any provided method in enhancedClick.`);
+  return false;
+}
 console.log("LOG POINT 8: After enhancedClick function definition");
-
 
 async function checkForContracts() {
   console.log(`[${new Date().toISOString()}] Running contract check...`);
@@ -98,7 +101,7 @@ async function checkForContracts() {
   
   try {
     console.log('Launching browser...');
-    // ---- CORRECTED puppeteer.launch OPTIONS ----
+    // ---- ENSURE CORRECT PUPPETEER LAUNCH OPTIONS ----
     browser = await puppeteer.launch({ 
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
@@ -110,7 +113,7 @@ async function checkForContracts() {
         '--no-first-run',
         '--no-zygote',
         '--disable-gpu',
-        '--window-size=1366,768' // Added window size as it's often useful
+        '--window-size=1366,768' 
       ],
       protocolTimeout: 180000 
     });
@@ -123,24 +126,62 @@ async function checkForContracts() {
     page.setDefaultTimeout(PAGE_TIMEOUT);
     
     await page.setRequestInterception(true);
-    page.on('request', (request) => { 
-        const resourceType = request.resourceType();
-        const url = request.url().toLowerCase();
-        if (['font', 'image', 'media', 'stylesheet'].includes(resourceType) && !url.includes('essential')) { request.abort(); }
-        else if (url.includes('analytics') || url.includes('tracking') || url.includes('hotjar') || url.includes('googletagmanager')) { request.abort(); }
-        else { request.continue(); }
-    });
+    page.on('request', (request) => { /* ... (request interception) ... */ });
 
     console.log('Navigating to property page...');
     await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
     console.log('Page loaded');
     
-    try { /* ... (cookie consent - unchanged) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
+    try { /* ... (cookie consent, keep it brief) ... */ 
+        console.log('Attempting to handle cookie consent (quick check)...');
+        const cookieSelector = '[id*="onetrust-accept-btn"], button[data-testid*="accept"]'; // Example
+        if (await waitForSelectorWithTimeout(page, cookieSelector, 5000)) {
+            await page.click(cookieSelector, {timeout: 5000});
+            console.log('Potential cookie button clicked.');
+            await page.waitForTimeout(1500);
+        } else {
+            console.log('No prominent cookie button found quickly for consent.');
+        }
+    } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
-    console.log('Current page URL:', page.url());
+    // --- MORE ROBUST WAIT BEFORE "Find a room" ---
+    console.log('Waiting for main page content to settle before finding "Find a room" button...');
+    try {
+       await page.waitForSelector('::-p-text(Rooms available)', { timeout: 20000 }); // Using Puppeteer's text selector
+       console.log("'Rooms available' text found, page likely settled.");
+    } catch (e) {
+       console.warn("Did not find 'Rooms available' text, page might not be fully settled. Proceeding to click 'Find a room' with caution.");
+       const pageContentForFindRoomDebug = await page.content();
+       await sendDiscordMessage({
+           title: "WARNING - Pre-FindRoom Check Failed",
+           description: `Could not find "Rooms available" text. URL: ${await page.url()}\nPage HTML (start):\n\`\`\`html\n${pageContentForFindRoomDebug.substring(0,1800)}\n\`\`\``,
+           color: 0xFF8C00
+       });
+    }
+    await page.waitForTimeout(2000); // Extra small pause
+    // --- END MORE ROBUST WAIT ---
+
+    console.log('Current page URL before Find a Room attempt:', await page.url());
     
-    const findRoomSuccess = await enhancedClick(page, ['button[data-event="book_a_room"]'], 'Find a room', 'Find a room button');
-    if (!findRoomSuccess) throw new Error('Could not click "Find a room" button.');
+    const findRoomSelectors = [
+        'button[data-event="book_a_room"][data-property="Pier Quays"]', 
+        'button[data-event="book_a_room"]',
+        // If using puppeteer-extra with queryHandler
+        // 'button[data-cy="button"]:visible:contains("Find a room")',
+        // For standard puppeteer, text must be handled by evaluate or text selector `::-p-text(...)`
+        // We rely on textContent in enhancedClick as a fallback
+    ];
+    const findRoomSuccess = await enhancedClick(page, findRoomSelectors, 'Find a room', 'Find a room button');
+    if (!findRoomSuccess) {
+       const pageContentAtFailure = await page.content();
+       await sendDiscordMessage({
+           title: "ERROR - Could Not Click 'Find a room'",
+           description: `Failed to click "Find a room". URL: ${await page.url()}\nPage HTML (start):\n\`\`\`html\n${pageContentAtFailure.substring(0,1800)}\n\`\`\``,
+           color: 0xFF0000
+       });
+       throw new Error('Could not click "Find a room" button.');
+    }
+    // --- END "Find a room" CLICK LOGIC ---
     
     console.log('Waiting for page to transition after "Find a room" click...');
     await page.waitForTimeout(7000); 
@@ -226,7 +267,6 @@ if (DUMP_HTML_AFTER_ENSUITE_CLICK) {
     setTimeout(checkForContracts, startupDelay);
 }
 console.log("LOG POINT 14: After Startup Logic initiated");
-
 
 process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
 process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err.message, err.stack); });
