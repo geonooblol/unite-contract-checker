@@ -1,5 +1,5 @@
-// Unite Students Contract Checker Bot - vNext Attempt 6
-// Webhook Diagnosis: Initializing with URL string directly to constructor.
+// Unite Students Contract Checker Bot - vNext Attempt 7
+// Using node-fetch for Discord messages.
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
 console.log("--- INIT: ENV VAR CHECK (RAW) ---");
@@ -10,39 +10,14 @@ console.log("--- END INIT: ENV VAR CHECK (RAW) ---");
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
-const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const cron = require('node-cron');
+const fetch = require('node-fetch'); // Using node-fetch
 
 const dotenv = require('dotenv');
 dotenv.config(); 
 
-console.log("--- AFTER DOTENV: ENV VAR CHECK ---");
-const ASSIGNED_WEBHOOK_URL_FROM_ENV = process.env.DISCORD_WEBHOOK_URL; 
-console.log("ASSIGNED_WEBHOOK_URL_FROM_ENV:", ASSIGNED_WEBHOOK_URL_FROM_ENV);
-console.log("Typeof ASSIGNED_WEBHOOK_URL_FROM_ENV:", typeof ASSIGNED_WEBHOOK_URL_FROM_ENV);
-console.log("--- END AFTER DOTENV: ENV VAR CHECK ---");
-
-// --- MODIFIED WEBHOOK INITIALIZATION (OPTION 1 TEST) ---
-const placeholderUrl = 'https://discord.com/api/webhooks/your-webhook-url-placeholder';
-
-// --- !!! TEMPORARY HARDCODING FOR DIAGNOSIS !!! ---
-// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-// PASTE YOUR ACTUAL DISCORD WEBHOOK URL BETWEEN THE QUOTES ON THE NEXT LINE:
-const THE_ACTUAL_URL_STRING_TO_TEST = "https://discord.com/api/webhooks/1373352326160584744/KvT0AGjoczodqXHWC6mdIFnDzt58zjGxPP48RPQkJ0rmL8qK6QSOg1YNsyncYRXQ1Dyl"; 
-// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-console.log("TEST (Option 1): Directly hardcoded URL string for new Webhook(string_directly):", THE_ACTUAL_URL_STRING_TO_TEST);
-
-// Try initializing by passing the URL string directly to the constructor
-const hook = new Webhook(THE_ACTUAL_URL_STRING_TO_TEST); 
-   
-console.log("Webhook object initialized with URL STRING DIRECTLY. Actual URL being used by 'hook':", hook.url);
-
-if (!hook.url || hook.url === placeholderUrl || !hook.url.startsWith('https://discord.com/api/webhooks/')) {
-    console.error(`CRITICAL (direct string init): Webhook URL is STILL not set correctly in hook object. hook.url: "${hook.url}".`);
-} else {
-    console.log("SUCCESS (direct string init): Webhook URL appears to be set correctly in the hook object!");
-}
-// --- END MODIFIED WEBHOOK INITIALIZATION ---
+const DISCORD_WEBHOOK_URL_FROM_ENV = process.env.DISCORD_WEBHOOK_URL; 
+console.log("DISCORD_WEBHOOK_URL_FROM_ENV (to be used by fetch):", DISCORD_WEBHOOK_URL_FROM_ENV);
 
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
@@ -50,27 +25,57 @@ const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway
 const NAVIGATION_TIMEOUT = 75000; 
 const PAGE_TIMEOUT = 100000;    
 
+// Set DUMP_HTML to true if you need to debug the contract section HTML again.
+// For now, focusing on getting past the "No room type buttons" error with fetch notifications.
 const DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG = process.env.DEBUG_HTML_DUMP === 'true' || true; 
 
 async function sendDiscordMessage(content) {
-  if (hook.url === placeholderUrl || !hook.url || !hook.url.startsWith('https://discord.com/api/webhooks/')) {
-    console.warn(`Discord webhook URL appears invalid or is a placeholder in sendDiscordMessage. Current hook.url: "${hook.url}". Skipping notification.`);
+  const webhookUrl = DISCORD_WEBHOOK_URL_FROM_ENV;
+
+  if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+    console.warn(`Discord webhook URL appears invalid or is a placeholder. Current URL: "${webhookUrl}". Skipping notification.`);
     return;
   }
-  // ... (rest of sendDiscordMessage is the same as vNext Attempt 5)
+
+  const payload = {
+    username: "Unite Students Alert", // Optional: Bot's name in Discord
+    // avatar_url: "YOUR_BOT_AVATAR_URL_HERE", // Optional
+    embeds: [{
+        title: content.title,
+        description: content.description.substring(0, 4090), // Discord limit for description
+        color: content.color,
+        footer: { text: `Checked at ${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}` },
+        url: content.url || PROPERTY_URL,
+        timestamp: new Date().toISOString()
+    }]
+  };
+
+  if (content.fields && content.fields.length > 0) {
+      payload.embeds[0].fields = content.fields.map(f => ({ 
+          name: String(f.name).substring(0, 256), // Field name limit
+          value: String(f.value).substring(0, 1024), // Field value limit
+          inline: f.inline || false
+      }));
+  }
+
   try {
-    const embed = new MessageBuilder()
-      .setTitle(content.title)
-      .setDescription(content.description.substring(0, 4090)) 
-      .setColor(content.color)
-      .setFooter(`Checked at ${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}`)
-      .setURL(content.url || PROPERTY_URL)
-      .setTimestamp();
-    if (content.fields) content.fields.forEach(field => embed.addField(field.name, String(field.value).substring(0,1020), field.inline));
-    await hook.send(embed);
-    console.log('Discord notification sent successfully');
+    // console.log(`Attempting to send message via fetch to: ${webhookUrl.substring(0, webhookUrl.lastIndexOf('/'))}/... Payload:`, JSON.stringify(payload).substring(0,200));
+    const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        console.error(`Fetch: Error sending Discord message. Status: ${response.status} ${response.statusText}`);
+        const responseBody = await response.text();
+        console.error("Fetch: Response body:", responseBody.substring(0, 500)); // Log part of the error body from Discord
+        // Avoid sending another message if the webhook itself is the problem.
+    } else {
+        console.log('Fetch: Discord notification sent successfully');
+    }
   } catch (error) {
-    console.error(`Failed to send Discord notification. Title: ${content.title}. Error:`, error.message, error.stack ? error.stack.substring(0,500) : '');
+      console.error('Fetch: Exception while sending Discord notification:', error.message, error.stack ? error.stack.substring(0,500) : '');
   }
 }
 
@@ -84,11 +89,10 @@ async function waitForSelectorWithTimeout(page, selector, timeout = 10000) {
 }
 
 async function enhancedClick(page, selectors, textContent, description = "element") {
-  // ... (enhancedClick is the same as vNext Attempt 5)
   for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
     try {
       console.log(`Attempting to click ${description} using selector: ${selector}`);
-      if (await waitForSelectorWithTimeout(page, selector, 10000)) {
+      if (await waitForSelectorWithTimeout(page, selector, 10000)) { 
         await page.click(selector);
         console.log(`Successfully clicked ${description} using: ${selector}`);
         await page.waitForTimeout(4000); 
@@ -100,7 +104,7 @@ async function enhancedClick(page, selectors, textContent, description = "elemen
       console.log(`Failed to click ${description} using selector: ${selector}. Error: ${e.message}`);
     }
   }
-  if (textContent) { /* ... (textContent click logic) ... */ }
+  if (textContent) { /* ... (textContent click logic - unchanged for now) ... */ }
   console.log(`Could not click ${description} using any provided method.`);
   return false;
 }
@@ -115,7 +119,7 @@ async function checkForContracts() {
     browser = await puppeteer.launch({ 
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-      args: [ /* ... (browser args from v5) ... */ 
+      args: [
         '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
         '--disable-gpu', '--window-size=1366,768'
@@ -124,11 +128,11 @@ async function checkForContracts() {
     });
     
     page = await browser.newPage();
-    // ... (viewport, useragent, timeouts, request interception setup from v5) ...
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
     page.setDefaultTimeout(PAGE_TIMEOUT);
+    
     await page.setRequestInterception(true);
     page.on('request', (request) => { 
         const resourceType = request.resourceType();
@@ -142,20 +146,21 @@ async function checkForContracts() {
     await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
     console.log('Page loaded');
     
-    try { /* ... (cookie consent from v5) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
+    try { /* ... (cookie consent - unchanged for now) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
     console.log('Current page URL:', page.url());
     
     const findRoomSuccess = await enhancedClick(page, ['button[data-event="book_a_room"]'], 'Find a room', 'Find a room button');
     if (!findRoomSuccess) throw new Error('Could not click "Find a room" button.');
     
-    // ... (Wait and debug after "Find a room" from v5, including the HTML dump to Discord on failure) ...
     console.log('Waiting for page to transition after "Find a room" click...');
     await page.waitForTimeout(7000); 
+    
     const urlAfterFindRoom = await page.url();
     const titleAfterFindRoom = await page.title();
     console.log('Current URL after Find Room and initial wait:', urlAfterFindRoom);
     console.log('Page title after Find Room and initial wait:', titleAfterFindRoom);
+
     console.log('Attempting to locate general room type selection interface (e.g., any button with data-room_type)...');
     if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 35000)) { 
         console.error("No room type buttons (e.g., [data-room_type]) found/visible in time even after extended wait.");
@@ -168,7 +173,7 @@ async function checkForContracts() {
             console.log(`DEBUG: URL at failure: ${currentUrlAtFailure}`);
             console.log(`DEBUG: Title at failure: ${pageTitleAtFailure}`);
             pageContentSnapshot = await page.content(); 
-            console.log("DEBUG: Page HTML snapshot (first 3KB):", pageContentSnapshot.substring(0,3000));
+            console.log("DEBUG: Page HTML snapshot (first 3KB for console):", pageContentSnapshot.substring(0,3000));
             const DUMP_LIMIT = 1800; 
             await sendDiscordMessage({
                 title: "ERROR - No Room Type Buttons", 
@@ -186,7 +191,6 @@ async function checkForContracts() {
     }
     console.log('General room type buttons interface appears to be ready.');
 
-
     const ensuiteSuccess = await enhancedClick(page, 
         ['button[data-room_type="ENSUITE"]', 'button[aria-label="Select ENSUITE"]', 'button[aria-label*="En-suite" i]', 'div[role="button"][aria-label*="En-suite" i]'], 
         'En-suite', 'Ensuite option'
@@ -194,36 +198,44 @@ async function checkForContracts() {
     if (!ensuiteSuccess) throw new Error('Could not click "Ensuite" option using enhancedClick.');
     
     console.log('Waiting for contract options to appear/load...');
-    if (!await waitForSelectorWithTimeout(page, 'span ::-p-text(Reserve your room)', 30000)) { /* ... */ }
+    if (!await waitForSelectorWithTimeout(page, 'span ::-p-text(Reserve your room)', 30000)) { /* ... (unchanged for now) ... */ }
     await page.waitForTimeout(3000); 
 
     console.log(`On page for contract extraction: ${await page.title()} | URL: ${await page.url()}`);
 
-    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic from v5) ... */ }
+    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic - unchanged, should use new sendDiscordMessage) ... */ }
     
     console.log('Extracting contract information...');
-    const contracts = await page.evaluate(() => { /* ... (contract extraction logic from v5) ... */ });
+    const contracts = await page.evaluate(() => { /* ... (contract extraction logic - unchanged from vNext Attempt 3/4) ... */ });
     
     console.log('Extracted contracts:', JSON.stringify(contracts, null, 2));
     
-    if (!contracts || contracts.length === 0) { /* ... (No details found message from v5) ... */ } 
-    else { /* ... (Process new contracts / standard only message from v5) ... */ }
+    if (!contracts || contracts.length === 0) { /* ... (No details found message) ... */ } 
+    else { /* ... (Process new contracts / standard only message) ... */ }
     
   } catch (error) {
     console.error('Error during check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
     let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) { /* ... (error details URL/Title from v5) ... */ }
+    if (page) { 
+        try { 
+            const currentUrl = await page.url(); 
+            const currentTitle = await page.title(); 
+            errorDetails += `\nURL: ${currentUrl}, Title: ${currentTitle}`; 
+        } catch (e) {
+            errorDetails += `\n(Could not get page URL/title for error report: ${e.message})`;
+        }
+    }
     await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 });
   } finally {
     if (browser) { console.log('Closing browser...'); await browser.close(); }
   }
 }
 
-// --- Health check and scheduling (unchanged from v5) ---
+// --- Health check and scheduling (unchanged) ---
 if (process.env.ENABLE_HEALTH_CHECK === 'true') { /* ... */ }
 cron.schedule(CHECK_INTERVAL, checkForContracts, { scheduled: true, timezone: 'Europe/London' });
 
-// --- Startup Logic (unchanged from v5) ---
+// --- Startup Logic (unchanged) ---
 if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... */ } 
 else { /* ... */ }
 
