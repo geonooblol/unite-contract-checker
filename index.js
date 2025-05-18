@@ -1,9 +1,9 @@
-// Unite Students Contract Checker Bot - vNext Attempt 9
-// Added try...catch inside page.evaluate for contract extraction to capture errors.
+// Unite Students Contract Checker Bot - vNext Attempt 10
+// Corrected puppeteer.launch args.
 // node-fetch is still commented out for this run.
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
-console.log("--- INIT: ENV VAR CHECK (RAW) ---"); // ... (these will still run)
+console.log("--- INIT: ENV VAR CHECK (RAW) ---"); 
 console.log("Raw process.env.DISCORD_WEBHOOK_URL:", process.env.DISCORD_WEBHOOK_URL);
 console.log("Typeof raw process.env.DISCORD_WEBHOOK_URL:", typeof process.env.DISCORD_WEBHOOK_URL);
 console.log("--- END INIT: ENV VAR CHECK (RAW) ---");
@@ -60,7 +60,6 @@ async function waitForSelectorWithTimeout(page, selector, timeout = 10000) {
 console.log("LOG POINT 7: After waitForSelectorWithTimeout function definition");
 
 async function enhancedClick(page, selectors, textContent, description = "element") {
-  // ... (function body unchanged)
   for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
     try {
       console.log(`Attempting to click ${description} using selector: ${selector}`);
@@ -90,19 +89,29 @@ async function checkForContracts() {
   
   try {
     console.log('Launching browser...');
+    // ---- RESTORED PUPPETEER LAUNCH ARGS ----
     browser = await puppeteer.launch({ 
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-      args: [ /* ... browser args ... */ ],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu'
+      ],
       protocolTimeout: 180000 
     });
+    // ---- END RESTORED ARGS ----
     
     page = await browser.newPage();
-    /* ... viewport, useragent, timeouts, request interception ... */
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
     page.setDefaultTimeout(PAGE_TIMEOUT);
+    
     await page.setRequestInterception(true);
     page.on('request', (request) => { 
         const resourceType = request.resourceType();
@@ -134,7 +143,7 @@ async function checkForContracts() {
     console.log('Attempting to locate general room type selection interface (e.g., any button with data-room_type)...');
     if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 35000)) { 
         console.error("No room type buttons (e.g., [data-room_type]) found/visible in time even after extended wait.");
-        // ... (debug info gathering and throw error - this part will call the neutered sendDiscordMessage) ...
+        // ... (debug info gathering and throw error - will call neutered sendDiscordMessage) ...
         throw new Error("No room type buttons (e.g., [data-room_type]) found/visible. Check console for page state dump details.");
     }
     console.log('General room type buttons interface appears to be ready.');
@@ -154,117 +163,60 @@ async function checkForContracts() {
     if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic - will call neutered sendDiscordMessage) ... */ }
     
     console.log('Extracting contract information...');
-    // ---- MODIFIED page.evaluate WITH INTERNAL TRY...CATCH ----
     const contractsData = await page.evaluate(() => {
-        try {
+        try { // Internal try...catch for page.evaluate
             const results = []; 
             function findContractTerms(contextNode) {
+                // ... (all your existing findContractTerms logic from v9) ...
                 let reserveSection = null;
-                const reserveRoomSpan = Array.from(contextNode.querySelectorAll('span')).find(
-                    s => s.textContent.trim().toLowerCase() === "reserve your room"
-                );
-
-                if (reserveRoomSpan && reserveRoomSpan.parentElement) {
-                    reserveSection = reserveRoomSpan.parentElement;
-                } else {
-                    // This console.error will only show in browser context, not Node.
-                    // The error object returned by page.evaluate will be more useful.
-                    console.error("page.evaluate: Could not find 'Reserve your room' span or its parent.");
-                    reserveSection = contextNode.querySelector('div.mt-9'); 
-                    if(reserveSection && !reserveSection.textContent.toLowerCase().includes("reserve your room")) {
-                        reserveSection = null; 
-                    } else if (reserveSection) {
-                         console.warn("page.evaluate: Found reserveSection using fallback 'div.mt-9'.");
-                    }
-                }
-
-                if (!reserveSection) {
-                     console.error("page.evaluate: `reserveSection` could not be definitively identified.");
-                     return false; // for findContractTerms
-                }
-
+                const reserveRoomSpan = Array.from(contextNode.querySelectorAll('span')).find( s => s.textContent.trim().toLowerCase() === "reserve your room" );
+                if (reserveRoomSpan && reserveRoomSpan.parentElement) { reserveSection = reserveRoomSpan.parentElement; }
+                else { console.error("page.evaluate: Could not find 'Reserve your room' span or parent."); reserveSection = contextNode.querySelector('div.mt-9'); if(reserveSection && !reserveSection.textContent.toLowerCase().includes("reserve your room")) { reserveSection = null; } else if (reserveSection) { console.warn("page.evaluate: Used fallback 'div.mt-9'.");}}
+                if (!reserveSection) { console.error("page.evaluate: `reserveSection` not identified."); return false; }
                 const optionsContainer = reserveSection.querySelector('div[role="radiogroup"]');
                 let actualContainerToQuery = optionsContainer;
-
-                if (!optionsContainer) {
-                    console.warn("page.evaluate: Could not find 'optionsContainer' (div[role=\"radiogroup\"]). Checking if reserveSection itself contains options.");
-                    const directOptions = reserveSection.querySelectorAll('div[id="pricing-option"][role="radio"]');
-                    if (directOptions.length > 0) {
-                        console.warn("page.evaluate: Using `reserveSection` as `optionsContainer`.");
-                        actualContainerToQuery = reserveSection;
-                    } else {
-                         console.error("page.evaluate: No clear optionsContainer or direct options in reserveSection.");
-                         return false; 
-                    }
-                }
-                
-                if (!actualContainerToQuery) { // Should not happen if above logic is correct, but good guard
-                    console.error("page.evaluate: actualContainerToQuery is null/undefined before querying pricingOptions.");
-                    return false;
-                }
-
+                if (!optionsContainer) { console.warn("page.evaluate: `div[role=\"radiogroup\"]` not found. Checking reserveSection."); const directOptions = reserveSection.querySelectorAll('div[id="pricing-option"][role="radio"]'); if (directOptions.length > 0) { console.warn("page.evaluate: Using `reserveSection` as container."); actualContainerToQuery = reserveSection; } else { console.error("page.evaluate: No clear optionsContainer."); return false; }}
+                if (!actualContainerToQuery) { console.error("page.evaluate: actualContainerToQuery is null."); return false; }
                 const pricingOptions = actualContainerToQuery.querySelectorAll('div[id="pricing-option"][role="radio"]');
                 if (pricingOptions && pricingOptions.length > 0) {
                     pricingOptions.forEach(option => {
                       const text = option.textContent || '';
-                      const weekMatch = text.match(/(\d{1,2})\s*weeks?/i);
-                      const term = weekMatch ? weekMatch[0] : 'Unknown term';
-                      const dateMatch = text.match(/\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s*-\s*\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/);
-                      const dates = dateMatch ? dateMatch[0] : 'Unknown dates';
-                      let type = 'Unknown type';
-                      if (text.toLowerCase().includes('full year')) type = 'Full Year';
-                      else if (text.toLowerCase().includes('academic year')) type = 'Academic Year';
-                      else if (text.toLowerCase().includes('semester')) type = 'Semester';
-                      else if (weekMatch && parseInt(weekMatch[1]) < 40 && parseInt(weekMatch[1]) > 5 ) type = 'Partial Year / Semester';
-                      const priceMatch = text.match(/£(\d+(\.\d{2})?)/);
-                      const price = priceMatch ? `£${priceMatch[1]}` : 'Unknown price';
-                      if (term !== 'Unknown term') {
-                        results.push({ term, dates, type, price, rawText: text.substring(0,150).replace(/\s+/g, ' ') });
-                      }
-                    });
-                    return true; 
-                } else {
-                    console.error("page.evaluate: No 'pricingOptions' found using 'div[id=\"pricing-option\"][role=\"radio\"]'. Snippet of container:", actualContainerToQuery.innerHTML.substring(0,500));
-                }
+                      const weekMatch = text.match(/(\d{1,2})\s*weeks?/i); const term = weekMatch ? weekMatch[0] : 'Unknown term';
+                      const dateMatch = text.match(/\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s*-\s*\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/); const dates = dateMatch ? dateMatch[0] : 'Unknown dates';
+                      let type = 'Unknown type'; if (text.toLowerCase().includes('full year')) type = 'Full Year'; else if (text.toLowerCase().includes('academic year')) type = 'Academic Year'; else if (text.toLowerCase().includes('semester')) type = 'Semester'; else if (weekMatch && parseInt(weekMatch[1]) < 40 && parseInt(weekMatch[1]) > 5 ) type = 'Partial Year / Semester';
+                      const priceMatch = text.match(/£(\d+(\.\d{2})?)/); const price = priceMatch ? `£${priceMatch[1]}` : 'Unknown price';
+                      if (term !== 'Unknown term') { results.push({ term, dates, type, price, rawText: text.substring(0,150).replace(/\s+/g, ' ') });}
+                    }); return true; 
+                } else { console.error("page.evaluate: No 'pricingOptions' found. Container HTML:", actualContainerToQuery.innerHTML.substring(0,500)); }
                 return false;
-            } // End of findContractTerms
-            
-            if (!findContractTerms(document)) { 
-                console.warn("page.evaluate: Primary contract term extraction (findContractTerms) did not yield results or failed to find sections.");
             }
-            
-            if (results.length === 0) { 
-                console.warn("page.evaluate: Primary extraction found 0 contracts. Trying broad page scan for 'X weeks'.");
-                // ... (broad scan logic - unchanged) ...
-            }
-            return { success: true, data: results, error: null, browserLogs: [] }; // Added browserLogs for future
+            if (!findContractTerms(document)) { console.warn("page.evaluate: Primary extraction (findContractTerms) failed/found nothing.");}
+            if (results.length === 0) { console.warn("page.evaluate: Primary found 0. Trying broad scan."); /* ... broad scan ... */ }
+            return { success: true, data: results, error: null, browserLogs: [] }; 
         } catch (e) {
-            console.error("Error INSIDE page.evaluate for contract extraction:", e.toString(), e.stack); // This console.error is in browser context
+            console.error("Error INSIDE page.evaluate for contract extraction:", e.toString(), e.stack); 
             return { success: false, data: [], error: e.toString() + "\nStack: " + (e.stack || 'No stack available') };
         }
     });
-    // ---- END MODIFIED page.evaluate ----
 
     let contracts;
-    if (contractsData && contractsData.success) { // Check contractsData itself is not undefined
+    if (contractsData && contractsData.success) { 
         contracts = contractsData.data;
         console.log('Extracted contracts successfully from page.evaluate wrapper.');
-    } else if (contractsData) { // It's an error object from our try...catch
+    } else if (contractsData) { 
         console.error("Error reported from page.evaluate during contract extraction:", contractsData.error);
         contracts = []; 
         await sendDiscordMessage({ 
             title: "❌ Error During Contract Scraping (page.evaluate)",
-            description: `Error: ${String(contractsData.error).substring(0,4000)}`, // Convert to string
+            description: `Error: ${String(contractsData.error).substring(0,4000)}`,
             color: 0xFF0000
         });
     } else {
-        // This case means page.evaluate itself might have failed in a way that didn't even return our object
-        // e.g. if it was killed due to page crash, or other critical puppeteer error.
         console.error("Critical failure: page.evaluate for contract extraction returned undefined or an unexpected value.");
-        contracts = []; // Default to empty
+        contracts = []; 
         await sendDiscordMessage({
             title: "❌ Critical Error in page.evaluate",
-            description: "The page.evaluate call for contract extraction did not return the expected object structure. This might indicate a page crash or severe Puppeteer issue.",
+            description: "The page.evaluate call for contract extraction did not return the expected object structure.",
             color: 0xFF0000
         });
     }
@@ -272,7 +224,7 @@ async function checkForContracts() {
     console.log('Final contracts variable:', JSON.stringify(contracts, null, 2));
     
     if (!contracts || contracts.length === 0) { 
-        if (!(contractsData && !contractsData.success)) { // Don't send "No Details" if we already sent an error from page.evaluate
+        if (!(contractsData && !contractsData.success)) { 
             await sendDiscordMessage({ title: '❓ Contract Check - No Details Found', description: `The bot couldn't find any contract information. (page.evaluate success: ${contractsData ? contractsData.success : 'N/A'})`, color: 15105570, url: await page.url() });
         }
     } 
