@@ -1,9 +1,10 @@
-// Unite Students Contract Checker Bot - vNext Attempt 15.3
-// page.goto() with NO waitUntil and shorter timeout, then immediate content check.
-// SCRIPT VERSION 15.3 log is present for deployment verification.
+// Unite Students Contract Checker Bot - vNext Attempt 15.4
+// Test A: Basic fetch to Google.
+// Test B: page.goto() for Unite with NO request interception & NO waitUntil.
+// SCRIPT VERSION 15.4 log is present.
 // DUMP_HTML_AFTER_ENSUITE_CLICK is true (though may not be reached).
 
-console.log("<<<<< SCRIPT VERSION 15.3 IS RUNNING - TOP OF FILE >>>>>"); 
+console.log("<<<<< SCRIPT VERSION 15.4 IS RUNNING - TOP OF FILE >>>>>"); 
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
 console.log("--- INIT: ENV VAR CHECK (RAW) ---"); 
@@ -31,22 +32,21 @@ console.log("LOG POINT 2: After CHECK_INTERVAL, before PROPERTY_URL");
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
 console.log("LOG POINT 3: After PROPERTY_URL");
 
-// Using a specific shorter timeout for the initial goto test
-const INITIAL_GOTO_TIMEOUT = 45000; // 45 seconds for the minimal goto attempt
-const NAVIGATION_TIMEOUT = 120000; // General navigation timeout for other operations
+const INITIAL_GOTO_TIMEOUT = 45000; 
+const NAVIGATION_TIMEOUT = 120000; 
 const PAGE_TIMEOUT = 150000;    
 console.log("LOG POINT 4: After TIMEOUT consts. INITIAL_GOTO_TIMEOUT set to:", INITIAL_GOTO_TIMEOUT);
 
 const DUMP_HTML_AFTER_ENSUITE_CLICK = process.env.DEBUG_HTML_DUMP === 'true' || true; 
 console.log("LOG POINT 5: After DUMP_HTML const. DUMP_HTML_AFTER_ENSUITE_CLICK is:", DUMP_HTML_AFTER_ENSUITE_CLICK);
 
-async function sendDiscordMessage(content) { /* ... (same as v15.2) ... */ }
+async function sendDiscordMessage(content) { /* ... (same as v15.3) ... */ }
 console.log("LOG POINT 6: After sendDiscordMessage function definition (using fetch).");
 
 async function waitForSelectorWithTimeout(page, selector, timeout = 10000) { /* ... (unchanged) ... */ }
 console.log("LOG POINT 7: After waitForSelectorWithTimeout function definition");
 
-async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15.2) ... */ }
+async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15.3) ... */ }
 console.log("LOG POINT 8: After enhancedClick function definition");
 
 async function checkForContracts() {
@@ -55,6 +55,29 @@ async function checkForContracts() {
   let page = null;
   
   try {
+    // ---- TEST A: Basic fetch to Google ----
+    console.log("Attempting to fetch google.com as a basic network test...");
+    let googleFetchOK = false;
+    try {
+        const googleResponse = await fetch('https://www.google.com', { timeout: 15000 }); // 15s timeout
+        console.log(`Google fetch status: ${googleResponse.status}`);
+        if (!googleResponse.ok) {
+            console.error("Failed to fetch google.com, basic network issue might exist.");
+            await sendDiscordMessage({title: "NETWORK TEST FAIL", description: `Could not fetch google.com. Status: ${googleResponse.status}`, color: 0xFF0000});
+        } else {
+            console.log("Successfully fetched google.com.");
+            await sendDiscordMessage({title: "NETWORK TEST OK", description: "Successfully fetched google.com.", color: 0x00FF00});
+            googleFetchOK = true;
+        }
+    } catch (fetchError) {
+        console.error("Error fetching google.com:", fetchError.message);
+        await sendDiscordMessage({title: "NETWORK TEST EXCEPTION", description: `Error fetching google.com: ${fetchError.message}`, color: 0xFF0000});
+    }
+    // if (!googleFetchOK) {
+    //    throw new Error("Basic network test to Google failed. Aborting further checks."); // Optional: stop if basic connectivity fails
+    // }
+    // ---- END TEST A ----
+
     console.log('Launching browser...');
     browser = await puppeteer.launch({ 
       headless: true,
@@ -70,16 +93,16 @@ async function checkForContracts() {
     page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-    // Default navigation timeout will be used by clicks/waits, but goto will use its own explicit timeout
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT); 
     page.setDefaultTimeout(PAGE_TIMEOUT); 
     
-    // --- REQUEST INTERCEPTION IS KEPT ENABLED FOR NOW ---
-    await page.setRequestInterception(true);
-    page.on('request', (request) => { /* ... (request interception) ... */ });
+    // ---- TEST B: Request Interception DISABLED for this goto test ----
+    // await page.setRequestInterception(true); // <<<< DISABLED
+    // page.on('request', (request) => { /* ... */ }); // <<<< DISABLED
+    console.log("Request interception is DISABLED for this run.");
 
-    // ---- MODIFIED GOTO: NO waitUntil, SHORTER TIMEOUT ----
-    console.log(`Navigating to property page (minimal wait test - ${INITIAL_GOTO_TIMEOUT}ms timeout)...`);
+
+    console.log(`Navigating to property page (NO waitUntil, NO interception, ${INITIAL_GOTO_TIMEOUT}ms timeout)...`);
     let initialContentSnapshot = "No content snapshot taken yet.";
     let initialUrl = "unknown";
     let initialTitle = "unknown";
@@ -88,54 +111,47 @@ async function checkForContracts() {
         await page.goto(PROPERTY_URL, { timeout: INITIAL_GOTO_TIMEOUT }); // NO waitUntil
         initialUrl = await page.url();
         initialTitle = await page.title();
-        console.log(`page.goto() resolved (minimal wait). Current URL: ${initialUrl}, Title: ${initialTitle}`);
+        console.log(`page.goto() resolved. Current URL: ${initialUrl}, Title: ${initialTitle}`);
 
-        console.log('Attempting to get page content snapshot immediately after minimal goto...');
+        console.log('Attempting to get page content snapshot immediately after goto...');
         initialContentSnapshot = await page.content();
         console.log('Page content snapshot (first 2KB for console):', initialContentSnapshot.substring(0, 2000));
         
-        // Send this initial snapshot to Discord
         const DUMP_LIMIT = 1800;
         await sendDiscordMessage({
-            title: "DEBUG - Minimal Goto Snapshot",
+            title: "DEBUG - Goto (No Intercept/WaitUntil) Snapshot",
             description: `URL: ${initialUrl}\nTitle: ${initialTitle}\n\nHTML (start):\n\`\`\`html\n${initialContentSnapshot.substring(0,DUMP_LIMIT)}\n\`\`\``,
-            color: 0x2ECC71 // Green for this specific debug
+            color: 0x2ECC71 
         });
-        if (initialContentSnapshot.length > DUMP_LIMIT) {
-            await sendDiscordMessage({ title: "DEBUG - Minimal Goto Snapshot (cont.)", description: `\`\`\`html\n${initialContentSnapshot.substring(DUMP_LIMIT, DUMP_LIMIT*2)}\n\`\`\``, color: 0x2ECC71 });
-        }
+        if (initialContentSnapshot.length > DUMP_LIMIT) { /* ... send continuation ... */ }
 
-        console.log("Waiting for body tag to be present after minimal goto...");
-        if (!await waitForSelectorWithTimeout(page, 'body', 15000)) { // Wait for body tag
-            console.error("Page body tag did not become available after minimal goto. Content received was:", initialContentSnapshot.substring(0,500));
-            throw new Error("Page body tag did not become available after minimal goto.");
+        console.log("Waiting for body tag to be present after goto...");
+        if (!await waitForSelectorWithTimeout(page, 'body', 15000)) { 
+            console.error("Page body tag did not become available. Content:", initialContentSnapshot.substring(0,500));
+            throw new Error("Page body tag did not become available after goto.");
         }
         console.log("Body tag found. Proceeding with page interaction attempts...");
 
     } catch (gotoError) {
-        console.error(`Error during minimal page.goto() or initial content check: ${gotoError.message}`, gotoError.stack);
+        console.error(`Error during page.goto() (No Intercept/WaitUntil) or initial check: ${gotoError.message}`, gotoError.stack);
         await sendDiscordMessage({
-            title: "❌ ERROR - Minimal Goto Failed",
-            description: `page.goto (no waitUntil) failed or initial check failed: ${gotoError.message}\nURL attempted: ${PROPERTY_URL}\nSnapshot attempt: ${initialContentSnapshot.substring(0,500)}`,
+            title: "❌ ERROR - Goto (No Intercept/WaitUntil) Failed",
+            description: `page.goto (no intercept/waitUntil) failed: ${gotoError.message}\nURL: ${PROPERTY_URL}\nSnapshot: ${initialContentSnapshot.substring(0,500)}`,
             color: 0xFF0000
         });
-        throw gotoError; // Re-throw to stop the script and trigger main catch
+        throw gotoError; 
     }
-    // ---- END MODIFIED GOTO ----
+    // ---- END TEST B ----
     
-    try { /* ... (cookie consent, brief as before) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
-    
-    console.log('Waiting for main page content to settle before finding "Find a room" button...');
-    try { /* ... (wait for "Rooms available") ... */ } catch (e) { /* ... (warning and HTML dump if not found) ... */ }
-    await page.waitForTimeout(2000); 
-    
-    console.log('Current page URL before Find a Room attempt:', await page.url());
-    
-    const findRoomSelectors = [ /* ... (same as v15) ... */ ];
-    const findRoomSuccess = await enhancedClick(page, findRoomSelectors, 'Find a room', 'Find a room button');
-    if (!findRoomSuccess) { /* ... (error handling and HTML dump from v15) ... */ throw new Error('Could not click "Find a room" button.'); }
-    
-    // ... (Rest of the script from "Waiting for page to transition..." onwards is the same as v15) ...
+    // Re-enable request interception if you were to proceed with clicks for a normal run
+    // For this test, we might not reach further, but if we did, we'd need it back on.
+    // For now, let's assume if goto fails, the script stops.
+
+    // ... (The rest of your script: cookie handling, find room click, ensuite click, HTML dump, contract extraction)
+    // This part will only run if the modified goto above succeeds.
+    // For brevity, I'll omit the full rest of the script as it's unchanged from v15.3,
+    // but it would start here with cookie handling.
+    // If goto succeeds, the DUMP_HTML_AFTER_ENSUITE_CLICK will still be active.
     
   } catch (error) {
     console.error('Error during check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
@@ -154,7 +170,7 @@ console.log("LOG POINT 13: Before Startup Logic (DUMP_HTML_AFTER_ENSUITE_CLICK i
 if (DUMP_HTML_AFTER_ENSUITE_CLICK) { 
     console.log("HTML DUMP (Post-Ensuite) MODE IS ON - running checkForContracts once for debug.");
     (async () => {
-        console.log("<<<<< SCRIPT VERSION 15.3 - CHECKFORCONTRACTS INVOKED >>>>>"); 
+        console.log("<<<<< SCRIPT VERSION 15.4 - CHECKFORCONTRACTS INVOKED >>>>>"); 
         await checkForContracts();
         console.log("HTML DUMP (Post-Ensuite) debug run complete.");
     })();
@@ -164,4 +180,4 @@ console.log("LOG POINT 14: After Startup Logic initiated");
 process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
 process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err.message, err.stack); });
 console.log("LOG POINT 15: Event listeners for SIGINT and uncaughtException set up. Script fully parsed.");
-console.log("<<<<< SCRIPT VERSION 15.3 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
+console.log("<<<<< SCRIPT VERSION 15.4 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
