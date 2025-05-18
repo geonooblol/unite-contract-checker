@@ -13,7 +13,7 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "node-cron": "^3.0.2",
     "dotenv": "^16.3.1",
-    "node-fetch": "^2.6.7" // Or "^3.0.0" if you prefer, but v2 is common CJS
+    "node-fetch": "^2.6.7"
   },
   "engines": {
     "node": ">=16.x"
