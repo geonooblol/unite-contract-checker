@@ -1,104 +1,181 @@
-// Unite Students Contract Checker Bot - vNext Attempt 15.11
-// ULTRA BASIC TEST: No Puppeteer. Only node-fetch.
+// Unite Students Contract Checker Bot - vNext Attempt 15.12
+// Re-introducing Puppeteer.
+// Initial goto: NO waitUntil, NO interception.
+// Added long dumb pause and document.readyState check after goto.
+// SCRIPT VERSION 15.12 log is present.
+// DUMP_HTML_AFTER_ENSUITE_CLICK is true.
 
-console.log("<<<<< SCRIPT VERSION 15.11 IS RUNNING - TOP OF FILE (NO PUPPETEER TEST) >>>>>"); 
+console.log("<<<<< SCRIPT VERSION 15.12 IS RUNNING - TOP OF FILE >>>>>"); 
 
+// --- ENV VAR CHECK AT THE VERY TOP ---
+console.log("--- INIT: ENV VAR CHECK (RAW) ---"); 
+console.log("Raw process.env.DISCORD_WEBHOOK_URL:", process.env.DISCORD_WEBHOOK_URL);
+console.log("Typeof raw process.env.DISCORD_WEBHOOK_URL:", typeof process.env.DISCORD_WEBHOOK_URL);
+console.log("--- END INIT: ENV VAR CHECK (RAW) ---");
+
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const cron = require('node-cron');
 const fetch = require('node-fetch'); 
-console.log("LOG POINT A: fetch and cron required.");
+console.log("LOG POINT 0: node-fetch require line has been processed.");
 
 const dotenv = require('dotenv');
 dotenv.config(); 
-console.log("LOG POINT B: dotenv.config() processed.");
+console.log("LOG POINT 0.5: dotenv.config() processed.");
 
 const DISCORD_WEBHOOK_URL_FROM_ENV = process.env.DISCORD_WEBHOOK_URL; 
-console.log("DISCORD_WEBHOOK_URL_FROM_ENV:", DISCORD_WEBHOOK_URL_FROM_ENV);
+console.log("DISCORD_WEBHOOK_URL_FROM_ENV (to be used by fetch):", DISCORD_WEBHOOK_URL_FROM_ENV);
+console.log("LOG POINT 1: Before CHECK_INTERVAL declaration");
 
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
+console.log("LOG POINT 2: After CHECK_INTERVAL, before PROPERTY_URL");
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
-console.log("LOG POINT C: Basic constants set.");
+console.log("LOG POINT 3: After PROPERTY_URL");
 
-async function sendDiscordMessage(content) {
-  const webhookUrl = DISCORD_WEBHOOK_URL_FROM_ENV;
-  if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
-    console.warn(`Discord webhook URL invalid: "${webhookUrl}". Skipping.`);
-    return;
-  }
-  const payload = { username: "Unite Alert (Basic Test)", embeds: [{ ...content, timestamp: new Date().toISOString() }] };
+const INITIAL_GOTO_TIMEOUT = 90000; // Increased initial goto timeout to 90s for this attempt
+const NAVIGATION_TIMEOUT = 120000; 
+const PAGE_TIMEOUT = 150000;    
+console.log("LOG POINT 4: After TIMEOUT consts. INITIAL_GOTO_TIMEOUT set to:", INITIAL_GOTO_TIMEOUT);
+
+const DUMP_HTML_AFTER_ENSUITE_CLICK = process.env.DEBUG_HTML_DUMP === 'true' || true; 
+console.log("LOG POINT 5: After DUMP_HTML const. DUMP_HTML_AFTER_ENSUITE_CLICK is:", DUMP_HTML_AFTER_ENSUITE_CLICK);
+
+async function sendDiscordMessage(content) { /* ... (same as v15.9 - using fetch) ... */ }
+console.log("LOG POINT 6: After sendDiscordMessage function definition (using fetch).");
+
+async function waitForSelectorWithTimeout(page, selector, timeout = 10000) { /* ... (unchanged) ... */ }
+console.log("LOG POINT 7: After waitForSelectorWithTimeout function definition");
+
+async function enhancedClick(page, selectors, textContent, description = "element") { /* ... (unchanged from v15.9) ... */ }
+console.log("LOG POINT 8: After enhancedClick function definition");
+
+async function checkForContracts() {
+  console.log("<<<<< CHECKFORCONTRACTS FUNCTION ENTERED (v15.12) >>>>>");
+  console.log(`[${new Date().toISOString()}] Running contract check...`);
+  let browser = null;
+  let page = null;
+  
   try {
-    const response = await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (!response.ok) console.error(`Fetch Discord Error: ${response.status} ${response.statusText}`, await response.text());
-    else console.log('Fetch Discord success.');
-  } catch (error) { console.error('Fetch Discord Exception:', error.message); }
-}
-console.log("LOG POINT D: sendDiscordMessage defined.");
+    // Direct fetch test can be commented out if it was consistently successful
+    // console.log(`Attempting direct fetch of PROPERTY_URL: ${PROPERTY_URL} with node-fetch...`);
+    // try { /* ... direct fetch ... */ } catch (directFetchError) { /* ... */ }
+    // console.log("<<<<< CHECKFORCONTRACTS: Direct node-fetch test completed. >>>>>");
 
-async function runSimpleCheck() {
-  console.log("<<<<< RUNSIMPLECHECK FUNCTION ENTERED (v15.11) >>>>>");
-  try {
-    console.log("Attempting direct fetch of Google (basic network test)...");
-    const googleResponse = await fetch('https://www.google.com', { timeout: 15000 });
-    console.log(`Google fetch status: ${googleResponse.status}`);
-    await sendDiscordMessage({ title: "Simple Test - Google Fetch", description: `Status: ${googleResponse.status}`, color: googleResponse.ok ? 0x00FF00 : 0xFF0000 });
-
-    console.log(`Attempting direct fetch of PROPERTY_URL: ${PROPERTY_URL}...`);
-    const uniteResponse = await fetch(PROPERTY_URL, { 
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
-        timeout: 45000 
+    console.log('Launching browser...');
+    browser = await puppeteer.launch({ 
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+      args: [
+        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
+        '--disable-gpu', '--window-size=1366,768' 
+      ],
+      protocolTimeout: 180000 
     });
-    console.log(`Unite Property URL fetch status: ${uniteResponse.status}`);
-    const uniteHtml = await uniteResponse.text();
-    const uniteHtmlContainsBody = uniteHtml.toLowerCase().includes("<body");
-    console.log(`Unite HTML (first 1KB): ${uniteHtml.substring(0,1024)}`);
-    console.log(`Unite HTML contains <body>: ${uniteHtmlContainsBody}`);
+    console.log("<<<<< CHECKFORCONTRACTS: Browser launched. >>>>>");
+    page = await browser.newPage();
+    console.log("<<<<< CHECKFORCONTRACTS: New page created. >>>>>");
+    
+    await page.setViewport({ width: 1366, height: 768 });
+    const commonUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.2478.80';
+    await page.setUserAgent(commonUserAgent);
+    console.log(`Set Puppeteer User-Agent to: ${commonUserAgent}`);
+    
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT); 
+    page.setDefaultTimeout(PAGE_TIMEOUT); 
+    
+    console.log("<<<<< CHECKFORCONTRACTS: Request Interception IS DISABLED for Puppeteer initial goto. >>>>>");
+    console.log("<<<<< CHECKFORCONTRACTS: Page setup complete (before goto). >>>>>");
 
-    await sendDiscordMessage({ 
-        title: "Simple Test - Unite Property Fetch", 
-        description: `Status: ${uniteResponse.status}\nContains <body>: ${uniteHtmlContainsBody}\nHTML (start):\n\`\`\`html\n${uniteHtml.substring(0,1800)}\n\`\`\``, 
-        color: uniteResponse.ok && uniteHtmlContainsBody ? 0x00FF00 : 0xFF8C00 
-    });
+    console.log(`Navigating to property page with Puppeteer (NO waitUntil, NO interception, ${INITIAL_GOTO_TIMEOUT}ms timeout)...`);
+    let httpResponse = null;
+    let contentAfterGoto = "Puppeteer goto did not resolve or content not fetched.";
+    let urlAfterGoto = PROPERTY_URL; 
+    let titleAfterGoto = "Unknown";
 
-    if (uniteResponse.ok && uniteHtmlContainsBody) {
-      console.log("Simple check: Unite property page fetched successfully with a body tag using node-fetch.");
-    } else {
-      console.error("Simple check: Failed to fetch Unite property page correctly with node-fetch.");
-    }
-
-  } catch (error) {
-    console.error('<<<<< RUNSIMPLECHECK: ERROR CAUGHT >>>>>');
-    console.error('Error during simple check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
-    await sendDiscordMessage({ title: '❌ Simple Test Error', description: `\`\`\`${error.message}\n${error.stack ? error.stack.substring(0,1000) : ''}\`\`\``, color: 0xFF0000 });
-  } finally {
-    console.log("<<<<< RUNSIMPLECHECK FUNCTION EXITED >>>>>");
-  }
-}
-console.log("LOG POINT E: runSimpleCheck defined.");
-
-// --- Startup Logic ---
-console.log("LOG POINT F: Before Startup Logic.");
-(async () => {
-    console.log("<<<<< SCRIPT VERSION 15.11 - ASYNC IIFE ENTERED (Simple Check) >>>>>"); 
     try {
-        console.log("<<<<< SCRIPT VERSION 15.11 - runSimpleCheck INVOKING NOW... >>>>>");
-        await runSimpleCheck();
-        console.log("<<<<< SCRIPT VERSION 15.11 - runSimpleCheck CALL COMPLETED >>>>>");
-    } catch (iifeError) {
-        console.error("<<<<< SCRIPT VERSION 15.11 - ERROR IN STARTUP ASYNC IIFE >>>>>", iifeError.message, iifeError.stack);
-        await sendDiscordMessage({
-            title: "❌ CRITICAL STARTUP ERROR (IIFE - Simple Check)",
-            description: `The main async startup function failed: ${iifeError.message}`, color: 0xFF0000
-        });
-    }
-    console.log("Simple check run complete (after IIFE).");
-})();
-console.log("LOG POINT G: After Startup Logic initiated.");
+        httpResponse = await page.goto(PROPERTY_URL, { timeout: INITIAL_GOTO_TIMEOUT }); 
+        
+        urlAfterGoto = await page.url(); 
+        titleAfterGoto = await page.title(); 
 
-process.on('SIGINT', () => { console.log('Bot shutting down (Simple Check)...'); process.exit(0); });
-process.on('uncaughtException', (err) => { 
-    console.error('<<<<< UNCAUGHT GLOBAL EXCEPTION (Simple Check) >>>>>');
-    console.error(err.message, err.stack); 
-    sendDiscordMessage({ title: "❌ CRITICAL - UNCAUGHT EXCEPTION (Simple Check)", description: `Exception: ${err.message}`, color: 0xFF0000 })
-        .catch(e => console.error("Failed to send Discord for uncaught exception:", e));
-});
-console.log("LOG POINT H: Event listeners set up. Script fully parsed (Simple Check).");
-console.log("<<<<< SCRIPT VERSION 15.11 HAS FINISHED PARSING - BOTTOM OF FILE (NO PUPPETEER TEST) >>>>>");
+        if (httpResponse) {
+            console.log(`Puppeteer page.goto() responded. Status: ${httpResponse.status()} ${httpResponse.statusText()}`);
+            await sendDiscordMessage({ /* ... DEBUG - Puppeteer Minimal Goto Response ... */ }); // Keep this
+
+            if (httpResponse.ok()) {
+                console.log("page.goto() OK. Adding a 30-SECOND fixed delay for page to execute JS and settle...");
+                await page.waitForTimeout(30000); // LONG DUMB PAUSE
+                console.log("30-second fixed delay complete.");
+
+                console.log('Attempting to get Puppeteer page.content() snapshot after long pause...');
+                contentAfterGoto = await page.content();
+                console.log('Puppeteer Page content snapshot (first 3KB for console):', contentAfterGoto.substring(0, 3000));
+                await sendDiscordMessage({ /* ... DEBUG - Puppeteer Minimal Goto HTML Snapshot ... */ });
+
+                const readyState = await page.evaluate(() => document.readyState);
+                console.log(`Check: document.readyState after long pause: "${readyState}"`);
+                await sendDiscordMessage({ title: "DEBUG - document.readyState Check", description: `document.readyState: ${readyState}`, color: readyState === 'complete' ? 0x2ECC71 : 0xFF8C00 });
+
+                const bodyExists = await page.evaluate(() => document.body !== null && typeof document.body !== 'undefined' && document.body.innerHTML.trim() !== '');
+                console.log("Check: Does document.body exist AND have content? Result:", bodyExists);
+                await sendDiscordMessage({ title: "DEBUG - Body DOM Existence & Content Check", description: `document.body exists & has content: ${bodyExists}`, color: bodyExists ? 0x2ECC71 : 0xFF8C00 });
+
+                if (!bodyExists) {
+                    throw new Error("Puppeteer: document.body was null, undefined, or empty after long pause.");
+                }
+                
+                console.log("Puppeteer: Body DOM element exists and has content. Now waiting for it with waitForSelector...");
+                if(!await waitForSelectorWithTimeout(page, 'body', 15000)){ // 15s should be enough if body is truly there
+                    console.warn("Puppeteer: Body exists in DOM and has content, but waitForSelector('body', {visible:true}) timed out.");
+                } else {
+                    console.log("Puppeteer: Body tag also confirmed by waitForSelector.");
+                }
+
+            } else { /* ... HTTP Not OK error handling ... */ throw new Error(`HTTP response not OK: ${httpResponse.status()}`); }
+        } else { /* ... null response error handling ... */ throw new Error("page.goto() returned null response."); }
+
+    } catch (puppeteerGotoError) {
+        console.error(`<<<<< CHECKFORCONTRACTS: ERROR IN PUPPETEER GOTO OR RESPONSE/DOM CHECK >>>>>`);
+        console.error(`Error: ${puppeteerGotoError.message}`, puppeteerGotoError.stack);
+        await sendDiscordMessage({
+            title: "❌ ERROR - Puppeteer Goto/DOM Check Failed",
+            description: `Puppeteer page.goto or DOM check failed: ${puppeteerGotoError.message}\nURL: ${urlAfterGoto}, Title: ${titleAfterGoto}\nContent Attempt (start): ${contentAfterGoto.substring(0,500)}`,
+            color: 0xFF0000
+        });
+        throw puppeteerGotoError; 
+    }
+    console.log("<<<<< CHECKFORCONTRACTS: Puppeteer initial page.goto() and basic DOM checks passed. >>>>>");
+    
+    console.log("Re-enabling request interception for further navigation...");
+    await page.setRequestInterception(true); 
+    page.on('request', (request) => { /* ... (tuned interception from v15.10) ... */ });
+
+    try { /* ... (cookie consent) ... */ } catch (e) { /* ... */ }
+    console.log('Waiting for main page interactive elements ("Rooms available" text)...');
+    try { /* ... (wait for "Rooms available") ... */ } catch (e) { /* ... */ }
+    await page.waitForTimeout(2000); 
+    
+    console.log('Current page URL before Find a Room attempt:', await page.url());
+    const findRoomSelectors = [ /* ... (same) ... */ ];
+    const findRoomSuccess = await enhancedClick(page, findRoomSelectors, 'Find a room', 'Find a room button');
+    if (!findRoomSuccess) { /* ... (error) ... */ throw new Error('Could not click "Find a room" button.'); }
+    
+    // ... (Rest of the script: ensuite click, DUMP_HTML_AFTER_ENSUITE_CLICK logic, contract extraction) ...
+    
+  } catch (error) { /* ... (main catch block - same) ... */ } 
+  finally { /* ... (finally block - same) ... */ }
+}
+console.log("LOG POINT 9: After checkForContracts function definition");
+
+// --- Health check and scheduling --- (unchanged)
+// --- Startup Logic --- (unchanged, DUMP_HTML_AFTER_ENSUITE_CLICK controls it)
+console.log("LOG POINT 13: Before Startup Logic (DUMP_HTML_AFTER_ENSUITE_CLICK is ON)");
+if (DUMP_HTML_AFTER_ENSUITE_CLICK) { /* ... */ } else { /* ... */ }
+console.log("LOG POINT 14: After Startup Logic initiated");
+
+process.on('SIGINT', () => { /* ... */ });
+process.on('uncaughtException', (err) => { /* ... */ });
+console.log("LOG POINT 15: Event listeners for SIGINT and uncaughtException set up. Script fully parsed.");
+console.log("<<<<< SCRIPT VERSION 15.12 HAS FINISHED PARSING - BOTTOM OF FILE >>>>>");
