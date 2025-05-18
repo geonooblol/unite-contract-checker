@@ -1,16 +1,34 @@
-// Unite Students Contract Checker Bot - vNext Attempt 2
-// Adjusted wait for room type interface.
+// Unite Students Contract Checker Bot - vNext Attempt 3
+// Added debug logging for DISCORD_WEBHOOK_URL and changes from previous suggestions.
+
+// --- ENV VAR CHECK AT THE VERY TOP ---
+console.log("--- INIT: ENV VAR CHECK (RAW) ---");
+console.log("Raw process.env.DISCORD_WEBHOOK_URL:", process.env.DISCORD_WEBHOOK_URL);
+console.log("Typeof raw process.env.DISCORD_WEBHOOK_URL:", typeof process.env.DISCORD_WEBHOOK_URL);
+console.log("--- END INIT: ENV VAR CHECK (RAW) ---");
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const cron = require('node-cron');
-const dotenv = require('dotenv');
-dotenv.config();
 
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-const hook = new Webhook(WEBHOOK_URL || 'https://discord.com/api/webhooks/your-webhook-url-placeholder'); // Ensure a placeholder
+const dotenv = require('dotenv');
+dotenv.config(); // Load .env file if present (primarily for local dev)
+
+// --- ENV VAR CHECK AFTER DOTENV ---
+console.log("--- AFTER DOTENV: ENV VAR CHECK ---");
+console.log("process.env.DISCORD_WEBHOOK_URL after dotenv.config():", process.env.DISCORD_WEBHOOK_URL);
+const ASSIGNED_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL; // Assign to a const for clarity
+console.log("ASSIGNED_WEBHOOK_URL:", ASSIGNED_WEBHOOK_URL);
+console.log("Typeof ASSIGNED_WEBHOOK_URL:", typeof ASSIGNED_WEBHOOK_URL);
+console.log("--- END AFTER DOTENV: ENV VAR CHECK ---");
+
+
+// Use the potentially updated process.env value
+const hook = new Webhook(ASSIGNED_WEBHOOK_URL || 'https://discord.com/api/webhooks/your-webhook-url-placeholder');
+console.log("Webhook object initialized. Actual URL being used by 'hook':", hook.url); // Log what the Webhook object itself is using
+
 
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */4 * * *';
 const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway/pier-quays';
@@ -19,28 +37,27 @@ const NAVIGATION_TIMEOUT = 75000;
 const PAGE_TIMEOUT = 100000;    
 
 // --- DEBUG HTML DUMP ---
-const DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG = process.env.DEBUG_HTML_DUMP === 'true' || false; 
+const DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG = process.env.DEBUG_HTML_DUMP === 'true' || true; // <<<< SETTING THIS TO TRUE FOR THIS RUN as per conversation flow
 
 async function sendDiscordMessage(content) {
-  if (!hook.url || hook.url.includes('your-webhook-url-placeholder')) {
-    console.warn('Discord webhook URL is not configured or is a placeholder. Skipping notification.');
+  if (!hook.url || hook.url.includes('your-webhook-url-placeholder') || hook.url.length < 100) { // Added length check as another guard
+    console.warn(`Discord webhook URL appears invalid or is a placeholder. Current hook.url: "${hook.url}". Skipping notification.`);
     return;
   }
   try {
     const embed = new MessageBuilder()
       .setTitle(content.title)
-      .setDescription(content.description.substring(0, 4090)) // Discord limit for description
+      .setDescription(content.description.substring(0, 4090)) 
       .setColor(content.color)
       .setFooter(`Checked at ${new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' })}`)
       .setURL(content.url || PROPERTY_URL)
       .setTimestamp();
-    if (content.fields) content.fields.forEach(field => embed.addField(field.name, field.value.substring(0,1020), field.inline)); // Limit field value
+    if (content.fields) content.fields.forEach(field => embed.addField(field.name, String(field.value).substring(0,1020), field.inline));
     await hook.send(embed);
     console.log('Discord notification sent successfully');
   } catch (error) {
     console.error('Failed to send Discord notification:', error.message, error.stack);
     try {
-      // Fallback for very long messages or other errors
       const simplifiedDescription = content.description.length > 1900 ? content.description.substring(0,1900) + "..." : content.description;
       await hook.send(`**${content.title}**\n${simplifiedDescription}`);
     } catch (err) {
@@ -117,7 +134,7 @@ async function checkForContracts() {
         '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
         '--disable-gpu', '--window-size=1366,768'
       ],
-      protocolTimeout: 120000 
+      protocolTimeout: 180000 // Increased protocolTimeout to 3 minutes
     });
     
     page = await browser.newPage();
@@ -174,12 +191,27 @@ async function checkForContracts() {
     await page.waitForTimeout(4000); 
     console.log('Current URL after Find Room attempt:', page.url());
 
-    // --- MODIFIED SECTION FOR WAITING FOR ROOM TYPE ---
+    // --- MODIFIED SECTION FOR WAITING FOR ROOM TYPE (from previous response) ---
     console.log('Waiting for general room type selection interface...');
-    if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 25000)) { // Wait for ANY room type button
-        const bodyTextContent = await page.evaluate(() => document.body?.innerText.substring(0, 3000).replace(/\s+/g, ' ')); // Get clean text
-        console.log("Page snippet if no room type buttons found:\n", bodyTextContent);
-        throw new Error("No room type buttons (e.g., [data-room_type]) found/visible in time.");
+    // --- THIS IS WHERE THE Runtime.callFunctionOn timed out ERROR OCCURRED PREVIOUSLY ---
+    // The error was in the `page.evaluate` INSIDE the `if` block if this `waitForSelectorWithTimeout` failed.
+    // We've increased protocolTimeout for the browser launch.
+    if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 30000)) { // Increased timeout here too
+        console.error("No room type buttons (e.g., [data-room_type]) found/visible in time. Page might be stuck or modal not loading correctly.");
+        try {
+            const currentUrl = await page.url();
+            const pageTitle = await page.title();
+            console.log(`Current URL when failing to find room types: ${currentUrl}`);
+            console.log(`Current page title when failing: ${pageTitle}`);
+            // Try a simpler content grab if evaluate for innerText fails
+            const pageContentSnapshot = await page.content();
+            console.log("Page content snapshot (first 2KB):", pageContentSnapshot.substring(0,2000));
+            await sendDiscordMessage({title: "ERROR - No Room Type Buttons", description: `URL: ${currentUrl}\nTitle: ${pageTitle}\nContent (start): ${pageContentSnapshot.substring(0,1000)}`, color:0xFF0000});
+
+        } catch (debugErr) {
+            console.error("Error getting debug info (URL/title/content) during room type failure:", debugErr.message);
+        }
+        throw new Error("No room type buttons (e.g., [data-room_type]) found/visible in time. Check logs for URL/title/content.");
     }
     console.log('General room type buttons interface appears to be ready.');
 
@@ -187,17 +219,16 @@ async function checkForContracts() {
         [
             'button[data-room_type="ENSUITE"]', 
             'button[aria-label="Select ENSUITE"]',
-            'button[aria-label*="En-suite" i]', // Case insensitive for aria-label
-            'div[role="button"][aria-label*="En-suite" i]' // If it's a div acting as button
+            'button[aria-label*="En-suite" i]', 
+            'div[role="button"][aria-label*="En-suite" i]'
         ], 
         'En-suite', 
         'Ensuite option'
     );
     if (!ensuiteSuccess) throw new Error('Could not click "Ensuite" option using enhancedClick.');
-    // --- END OF MODIFIED SECTION ---
     
     console.log('Waiting for contract options to appear/load...');
-    if (!await waitForSelectorWithTimeout(page, 'span ::-p-text(Reserve your room)', 25000)) {
+    if (!await waitForSelectorWithTimeout(page, 'span ::-p-text(Reserve your room)', 30000)) { // Increased timeout
         const contentCheck = await page.content();
         if (!contentCheck.toLowerCase().includes("reserve your room")) {
              console.log("Page content snippet (Reserve your room not found):", contentCheck.substring(0,3000));
@@ -211,10 +242,41 @@ async function checkForContracts() {
 
     console.log(`On page for contract extraction: ${await page.title()} | URL: ${page.url()}`);
 
-    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { /* ... (HTML dump logic) ... */ }
+    if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) {
+        console.log("---- DEBUG: Attempting to dump HTML for contract section ----");
+        // ... (rest of HTML dump logic, now uses updated sendDiscordMessage)
+        try {
+            await page.waitForSelector('span, div', {timeout: 5000}); 
+            const reserveSectionHTML = await page.evaluate(() => {
+                const reserveHeadingText = "Reserve your room"; 
+                const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, span, p, div'));
+                const targetHeading = headings.find(el => el.textContent.trim().toLowerCase().includes(reserveHeadingText.toLowerCase()));
+                if (targetHeading) {
+                    let container = targetHeading.closest('div[class*="mt-"]'); 
+                    if (!container) container = targetHeading.closest('section');
+                    if (!container) container = targetHeading.parentElement;
+                    while(container && container.parentElement && container.textContent.length < 500 && container.children.length < 10) {
+                        container = container.parentElement;
+                    }
+                    return container ? container.outerHTML : `Found "${reserveHeadingText}" but no suitable parent.`;
+                }
+                return `Could not find heading/span containing "${reserveHeadingText}". Body snapshot: ` + (document.body ? document.body.innerText.substring(0, 1000) : "No body");
+            });
+            console.log("---- HTML DUMP FOR CONTRACT SECTION ----\n", reserveSectionHTML.substring(0, 15000), "\n---- END HTML DUMP ----");
+            const chunks = [];
+            for (let i = 0; i < reserveSectionHTML.length; i += 1900) chunks.push(reserveSectionHTML.substring(i, i + 1900));
+            for (const chunk of chunks) {
+                await sendDiscordMessage({ title: "DEBUG Contract Section HTML", description: `\`\`\`html\n${chunk}\n\`\`\``, color: 0x0000FF });
+                await page.waitForTimeout(500); 
+            }
+        } catch (htmlError) {
+            console.log("Error trying to get specific HTML for debug: ", htmlError.message);
+            await sendDiscordMessage({ title: "DEBUG HTML DUMP FAILED", description: htmlError.message, color: 0xFF0000 });
+        }
+    }
     
     console.log('Extracting contract information...');
-    const contracts = await page.evaluate(() => {
+    const contracts = await page.evaluate(() => { /* ... (contract extraction logic from previous good version) ... */ 
       const results = [];
       function findContractTerms(contextNode) {
         let reserveSection = null;
@@ -279,12 +341,8 @@ async function checkForContracts() {
         }
         return false;
       }
-      
-      if (!findContractTerms(document)) {
-          console.warn("page.evaluate: Primary contract term extraction (findContractTerms) failed or found nothing.");
-      }
-      
-      if (results.length === 0) { /* ... (Broad scan logic - unchanged) ... */ }
+      if (!findContractTerms(document)) { console.warn("page.evaluate: Primary contract term extraction (findContractTerms) failed or found nothing."); }
+      if (results.length === 0) { /* Broad scan */ }
       return results;
     });
     
@@ -317,10 +375,10 @@ async function checkForContracts() {
     }
     
   } catch (error) {
-    console.error('Error during check:', error.message, error.stack); // Log stack
+    console.error('Error during check:', error.message, error.stack); 
     let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) { try { errorDetails += `\nURL: ${page.url()}, Title: ${await page.title()}`; } catch (e) {/*ignore*/} }
-    await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 }); // Allow longer error
+    if (page) { try { errorDetails += `\nURL: ${await page.url()}, Title: ${await page.title()}`; } catch (e) {/*ignore*/} } // await page.url()
+    await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 });
   } finally {
     if (browser) { console.log('Closing browser...'); await browser.close(); }
   }
@@ -336,18 +394,23 @@ if (process.env.ENABLE_HEALTH_CHECK === 'true') {
 
 cron.schedule(CHECK_INTERVAL, checkForContracts, { scheduled: true, timezone: 'Europe/London' });
 
-if (!DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) {
-    const startupDelay = Math.floor(Math.random() * 7000) + 3000; 
-    console.log(`Bot starting initial check in ${startupDelay/1000}s...`);
-    setTimeout(checkForContracts, startupDelay);
-} else {
+// --- Startup Logic ---
+// Keep DUMP_HTML_FOR_DEBUG true for this specific run based on conversation
+// If it was process.env.DEBUG_HTML_DUMP, it would control it externally
+if (DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG) { 
     console.log("HTML DUMP MODE IS ON - running checkForContracts once for debug.");
     (async () => {
         await checkForContracts();
-        // console.log("HTML DUMP run complete. Exiting for debug mode.");
-        // process.exit(0); 
+        console.log("HTML DUMP debug run complete.");
+        // if you want it to exit after one debug run when DUMP_HTML is true and not a cron service:
+        // if (!process.env.CRON_RUNNING_AS_SERVICE) { process.exit(0); } 
     })();
+} else {
+    const startupDelay = Math.floor(Math.random() * 7000) + 3000; 
+    console.log(`Bot starting initial check in ${startupDelay/1000}s... (Normal mode)`);
+    setTimeout(checkForContracts, startupDelay);
 }
 
+
 process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
-process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err.message, err.stack); }); // Log stack
+process.on('uncaughtException', (err) => { console.error('Uncaught global exception:', err.message, err.stack); });
