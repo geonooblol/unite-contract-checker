@@ -20,7 +20,7 @@ const PROPERTY_URL = 'https://www.unitestudents.com/student-accommodation/medway
 const DEFAULT_CONTRACT = '51 weeks'; // The contract we want to avoid
 
 // Set timeouts
-const NAVIGATION_TIMEOUT = 60000; // 60 seconds
+const NAVIGATION_TIMEOUT = 60000; // 60 seconds (can be increased if needed, but waitUntil change is primary)
 const PAGE_TIMEOUT = 90000; // 90 seconds
 
 // Function to send discord messages
@@ -73,11 +73,11 @@ async function enhancedClick(page, selectors, textContent, description = "elemen
       if (elementVisible) {
         await page.click(selector);
         console.log(`Successfully clicked ${description} using: ${selector}`);
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(3000); // Wait for action to process
         return true;
       }
     } catch (e) {
-      console.log(`Failed to click ${description} using selector: ${selector}`);
+      console.log(`Failed to click ${description} using selector: ${selector}. Error: ${e.message}`);
     }
   }
 
@@ -87,21 +87,18 @@ async function enhancedClick(page, selectors, textContent, description = "elemen
       console.log(`Attempting to click ${description} by text content: "${textContent}"`);
       
       const clicked = await page.evaluate((text) => {
-        // Look for elements containing the text
         const elements = Array.from(document.querySelectorAll('button, a, div[role="button"], [class*="button"]'));
         let targetElement = null;
         
-        // First try exact text match
-        targetElement = elements.find(el => el.textContent.trim() === text);
-        
-        // If not found, try contains
-        if (!targetElement) {
-          targetElement = elements.find(el => el.textContent.includes(text));
-        }
+        targetElement = elements.find(el => el.textContent.trim().toLowerCase().includes(text.toLowerCase()));
         
         if (targetElement) {
-          targetElement.click();
-          return true;
+          // Check visibility before clicking
+          const rect = targetElement.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0 && getComputedStyle(targetElement).visibility !== 'hidden') {
+            targetElement.click();
+            return true;
+          }
         }
         return false;
       }, textContent);
@@ -116,19 +113,25 @@ async function enhancedClick(page, selectors, textContent, description = "elemen
     }
   }
 
-  // Last resort - try to find any interactive element with a keyword
+  // Last resort - try to find any interactive element with a keyword from description
   if (description.includes(" ")) {
-    const keywords = description.split(" ");
+    const keywords = description.split(" ").map(k => k.toLowerCase()).filter(k => k.length > 2);
     try {
       console.log(`Trying keywords from description: ${keywords.join(", ")}`);
       
-      const clicked = await page.evaluate((keywords) => {
+      const clicked = await page.evaluate((kws) => {
         const elements = Array.from(document.querySelectorAll('button, a, div[role="button"], [class*="button"]'));
         
-        // Find elements containing any of our keywords
-        for (const keyword of keywords) {
-          if (keyword.length < 3) continue; // Skip short words
-          const found = elements.find(el => el.textContent.toLowerCase().includes(keyword.toLowerCase()));
+        for (const keyword of kws) {
+          const found = elements.find(el => {
+            const elText = el.textContent.toLowerCase();
+            const elAria = (el.getAttribute('aria-label') || '').toLowerCase();
+            if (elText.includes(keyword) || elAria.includes(keyword)) {
+                 const rect = el.getBoundingClientRect();
+                 return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+            }
+            return false;
+          });
           if (found) {
             found.click();
             return `Clicked element containing "${keyword}"`;
@@ -143,7 +146,7 @@ async function enhancedClick(page, selectors, textContent, description = "elemen
         return true;
       }
     } catch (e) {
-      console.log(`Keyword search failed: ${e.message}`);
+      console.log(`Keyword search for ${description} failed: ${e.message}`);
     }
   }
 
@@ -161,7 +164,6 @@ async function checkForContracts() {
   try {
     console.log('Launching browser...');
     
-    // Launch browser with minimal resources
     browser = await puppeteer.launch({ 
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
@@ -179,26 +181,20 @@ async function checkForContracts() {
     
     page = await browser.newPage();
     
-    // Set viewport and user agent
     await page.setViewport({ width: 1280, height: 920 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
-    page.setDefaultTimeout(PAGE_TIMEOUT);
+    page.setDefaultTimeout(PAGE_TIMEOUT); // General operations timeout
     
-    // Only block certain resources to ensure page functionality
     await page.setRequestInterception(true);
     page.on('request', (request) => {
       const resourceType = request.resourceType();
       const url = request.url().toLowerCase();
-      
-      // Block analytics, tracking, and some media but allow CSS and basic images
-      if (
-        ['media'].includes(resourceType) ||
-        url.includes('analytics') || 
-        url.includes('tracking') ||
-        url.includes('google-analytics') ||
-        url.includes('facebook.com') ||
-        url.includes('hotjar')
+      if (['font', 'image', 'media', 'stylesheet'].includes(resourceType) && !url.includes('essential')) { // Allow essential CSS/fonts
+        request.abort();
+      } else if (
+        url.includes('analytics') || url.includes('tracking') || url.includes('google-analytics') ||
+        url.includes('facebook.com') || url.includes('hotjar') || url.includes('googletagmanager')
       ) {
         request.abort();
       } else {
@@ -206,194 +202,200 @@ async function checkForContracts() {
       }
     });
 
-    // Navigate to the property page
     console.log('Navigating to property page...');
-    await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
+    // ** STEP 1 from previous advice was to change waitUntil here **
+    await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' }); // Changed from networkidle2
     console.log('Page loaded');
     
-    // Handle cookie consent if it appears
+    // Handle cookie consent
     try {
-      // Various common cookie consent selectors
+      console.log('Attempting to handle cookie consent...');
+      // ** STEP 1 from latest instructions (cookie selectors & logic) **
       const cookieSelectors = [
-        'button[id*="cookie"]', 
-        'button:has-text("Accept")',
-        'button:has-text("Accept All")',
-        'button:has-text("Allow")',
-        'button.cookie-consent',
-        '[aria-label="Accept cookies"]'
+        'button[id*="cookie"]',
+        '[id*="onetrust-accept-btn"]',
+        'button[data-testid*="accept"]',
+        'button[aria-label*="Accept"]',
+        'button[aria-label*="Allow"]',
+        'button[class*="cookie"]',
+        'button[class*="consent"]',
+        '#hs-eu-confirmation-button'
       ];
-      
+
+      let clickedACookieButton = false;
       for (const selector of cookieSelectors) {
         const cookieBtn = await page.$(selector);
         if (cookieBtn) {
-          await cookieBtn.click();
-          console.log(`Clicked cookie consent button: ${selector}`);
-          await page.waitForTimeout(1500);
-          break;
+          try {
+            await page.evaluate(btn => btn.scrollIntoViewIfNeeded(), cookieBtn); // Scroll into view
+            await cookieBtn.click();
+            console.log(`Clicked cookie consent button using selector: ${selector}`);
+            await page.waitForTimeout(2000); // Give it a sec
+            clickedACookieButton = true;
+            break; 
+          } catch (clickError) {
+            console.log(`Found cookie button with ${selector} but click failed: ${clickError.message}`);
+          }
+        }
+      }
+
+      if (!clickedACookieButton) {
+        console.log('No cookie button clicked via specific selectors, trying text-based search...');
+        try {
+          const clickedByText = await page.evaluate(() => {
+            const keywords = ["accept all cookies", "accept cookies", "allow all", "i agree", "accept"];
+            const buttons = Array.from(document.querySelectorAll('button, a[role="button"]'));
+            for (const btn of buttons) {
+              const text = btn.textContent.toLowerCase().trim();
+              if (keywords.some(kw => text.includes(kw))) {
+                const rect = btn.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 && getComputedStyle(btn).visibility !== 'hidden') {
+                    btn.click();
+                    return true; 
+                }
+              }
+            }
+            return false; 
+          });
+
+          if (clickedByText) {
+            console.log('Successfully clicked cookie consent button via text search.');
+            await page.waitForTimeout(2000);
+          } else {
+            console.log('Could not find or click a cookie consent button via text search either.');
+          }
+        } catch (evalError) {
+          console.log(`Error during text-based cookie button click: ${evalError.message}`);
         }
       }
     } catch (e) {
-      console.log('No cookie banner or error handling it:', e.message);
+      console.log('Error during cookie consent handling:', e.message);
     }
     
-    // Save a debug log of the page content to help with debugging
-    const pageContent = await page.content();
     console.log('Current page URL:', page.url());
     
-    // Find and click on the "Find a room" button - multiple possible selectors
     const findRoomSuccess = await enhancedClick(
       page,
       [
-        'button[data-event="book_a_room"]',
-        'button[data-cy="button"]:has-text("Find a room")',
-        'a:has-text("Find a room")',
-        'button:has-text("Find a room")',
-        '[data-event="book_a_room"]'
+        'button[data-event="book_a_room"]', // Primary selector
+        'a[href*="book"][data-event="book_a_room"]', // If it's an anchor tag
+        'button:has-text("Find a room")' // This :has-text is non-standard, relying on puppeteer-extra potentially
       ],
-      'Find a room',
+      'Find a room', // Text content fallback
       'Find a room button'
     );
     
     if (!findRoomSuccess) {
-      console.log('Failed to click Find a room button, trying to continue anyway...');
+      console.log('Failed to click Find a room button, aborting this check.');
+      throw new Error('Could not click "Find a room" button.'); // Critical step
     }
     
-    // Wait for the next page to load
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(5000); // Wait for modal/navigation
     console.log('Current URL after Find Room:', page.url());
+
+    // ** STEP 2 from latest instructions (wait for room selection page) **
+    console.log('Waiting for room type selection interface to be ready...');
+    try {
+      await page.waitForSelector('button[data-room_type]', { visible: true, timeout: 20000 });
+      console.log('Room type selection interface appears to be ready.');
+    } catch (err) {
+      console.warn(`Room type selection interface not clearly detected (waited for 'button[data-room_type]'): ${err.message}. Proceeding anyway.`);
+    }
+    // ** END OF STEP 2 **
     
-    // Click on the Ensuite option - enhanced approach with multiple selectors
+    // Click on the Ensuite option
+    // ** STEP 3 from latest instructions (clean up ensuite selectors) **
     const ensuiteSuccess = await enhancedClick(
       page,
       [
         'button[data-room_type="ENSUITE"]',
-        'button:has-text("En-suite")',
-        'div:has-text("En-suite"):has([role="radio"])',
-        '#room-option-card:has-text("En-suite")',
-        '[aria-label="Select ENSUITE"]'
+        'button[aria-label="Select ENSUITE"]',
+        'button[id="room-option-card"][data-room_type="ENSUITE"]',
+        'button[aria-label*="Ensuite" i]', // 'i' for case-insensitivity if supported by query handler
+        'div[role="button"][aria-label*="Ensuite" i]',
       ],
-      'En-suite',
+      'En-suite', // Text content fallback
       'Ensuite option'
     );
+    // ** END OF STEP 3 **
     
     if (!ensuiteSuccess) {
-      console.log('Failed to click Ensuite option, trying to continue...');
-      
-      // See if we're already at room selection by looking for "Reserve your room"
-      const reserveVisible = await waitForSelectorWithTimeout(page, 'div:has-text("Reserve your room")');
+      console.log('Failed to click Ensuite option, trying to continue or check state...');
+      const reserveVisible = await waitForSelectorWithTimeout(page, 'span:contains("Reserve your room")', 5000); // :contains non-standard
       if (!reserveVisible) {
-        console.log('Could not find reservation section either');
-        
-        // If we can't find either, try to detect where we are
-        const currentState = await page.evaluate(() => {
-          if (document.body.textContent.includes('Reserve your room')) return 'reservation';
-          if (document.body.textContent.includes('Rooms available')) return 'property';
-          if (document.body.textContent.includes('En-suite') || document.body.textContent.includes('Studio')) return 'room-selection';
-          return 'unknown';
-        });
-        
-        console.log(`Current page state detected as: ${currentState}`);
+         const pageContentForDebug = await page.content();
+         console.log('Could not find reservation section either. Page state might be unexpected.');
+         // console.log('Page content for debug:', pageContentForDebug.substring(0, 2000)); // Log snippet
+         throw new Error('Could not navigate to or identify the room reservation section after failing to click ensuite.');
       }
     }
     
-    // Wait for contract information to load
     console.log('Waiting for contract information to load...');
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(5000); 
     
-    // Debug info - get URL and page title
     const currentUrl = page.url();
     const title = await page.title();
-    console.log(`Current page: ${title} | URL: ${currentUrl}`);
+    console.log(`Current page for contract extraction: ${title} | URL: ${currentUrl}`);
     
-    // Enhanced contract extraction - multiple approaches
     console.log('Extracting contract information...');
-    
-    // Approach 1: Look specifically for the "Reserve your room" section
     const contracts = await page.evaluate(() => {
       const results = [];
       
-      // Multiple approaches to find contract information
       function findContractTerms() {
-        // Approach 1: Look for pricing options in the Reserve section
-        const reserveSection = document.querySelector('div.mt-9, div:has(> span:contains("Reserve your room"))');
+        // ** STEP 4 from latest instructions (fix contract extraction selector) **
+        let reserveSection = null;
+        const allSpans = Array.from(document.querySelectorAll('span'));
+        const reserveSpan = allSpans.find(s => s.textContent.trim().toLowerCase() === "reserve your room");
+
+        if (reserveSpan) {
+          reserveSection = reserveSpan.closest('div[class*="mt-9"][class*="pb-"]');
+          if (!reserveSection) {
+            reserveSection = reserveSpan.parentElement.tagName === 'DIV' ? reserveSpan.parentElement : reserveSpan.closest('div');
+          }
+        } else {
+          reserveSection = document.querySelector('div.mt-9.pb-'); 
+          if (!reserveSection) {
+              reserveSection = document.querySelector('div.mt-9');
+          }
+        }
+        // ** END OF STEP 4 **
+
         if (reserveSection) {
-          const pricingOptions = reserveSection.querySelectorAll('[role="radio"], div.flex.cursor-pointer, div.flex:has(span:contains("weeks"))');
+          console.log('Found reserveSection'); // Browser console
+          const pricingOptions = reserveSection.querySelectorAll('[role="radio"], div[id="pricing-option"], div[class*="pricing-option"]');
           
           if (pricingOptions && pricingOptions.length > 0) {
+            console.log(`Found ${pricingOptions.length} pricing options`); // Browser console
             pricingOptions.forEach(option => {
               const text = option.textContent || '';
-              
-              // Extract weeks
               const weekMatch = text.match(/(\d+)\s*weeks?/i);
               const term = weekMatch ? weekMatch[0] : 'Unknown term';
-              
-              // Extract dates
-              const dateMatch = text.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
+              const dateMatch = text.match(/\d{2}\/\d{2}\/\d{2,4}\s*-\s*\d{2}\/\d{2}\/\d{2,4}/); // Allow 2 or 4 digit year
               const dates = dateMatch ? dateMatch[0] : 'Unknown dates';
               
-              // Extract type
               let type = 'Unknown type';
               if (text.toLowerCase().includes('full year')) type = 'Full Year';
               else if (text.toLowerCase().includes('academic year')) type = 'Academic Year';
               else if (text.toLowerCase().includes('semester')) type = 'Semester';
               
-              // Extract price
-              const priceMatch = text.match(/£(\d+)/);
+              const priceMatch = text.match(/£(\d+(\.\d{2})?)/); // Capture pounds and pence
               const price = priceMatch ? `£${priceMatch[1]}` : 'Unknown price';
               
-              results.push({ term, dates, type, price });
+              results.push({ term, dates, type, price, rawText: text.substring(0,100) });
             });
+          } else {
+             console.log('No pricingOptions found in reserveSection'); // Browser console
           }
           return results.length > 0;
+        } else {
+            console.log('reserveSection not found'); // Browser console
         }
         return false;
       }
       
-      // Try the main approach
       if (!findContractTerms()) {
-        // Fallback: Look for any pricing information on the page
-        const pricingTexts = [];
-        const priceElements = document.querySelectorAll('div:has(span:contains("£")), div:has(span:contains("week"))');
-        
-        priceElements.forEach(el => {
-          const text = el.textContent.trim();
-          if (text.includes('£') && text.includes('week')) {
-            pricingTexts.push(text);
-          }
-        });
-        
-        // Extract contract info from the collected texts
-        pricingTexts.forEach(text => {
-          // Extract weeks
-          const weekMatch = text.match(/(\d+)\s*weeks?/i);
-          const term = weekMatch ? weekMatch[0] : 'Unknown term';
-          
-          // Extract dates
-          const dateMatch = text.match(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}\/\d{2}\/\d{2}/);
-          const dates = dateMatch ? dateMatch[0] : 'Unknown dates';
-          
-          // Extract price
-          const priceMatch = text.match(/£(\d+)/);
-          const price = priceMatch ? `£${priceMatch[1]}` : 'Unknown price';
-          
-          results.push({ term, dates, type: 'Unknown type', price });
-        });
-      }
-      
-      // Last resort: Look for week mentions anywhere in the page
-      if (results.length === 0) {
-        const weekMatches = document.body.textContent.match(/(\d+)\s*weeks?/gi);
-        if (weekMatches) {
-          const uniqueTerms = [...new Set(weekMatches)];
-          uniqueTerms.forEach(weekTerm => {
-            results.push({
-              term: weekTerm,
-              dates: 'Found via direct scan',
-              type: 'Unknown',
-              price: 'Unknown'
-            });
-          });
-        }
+        // Fallback logic can be added here if needed
+        console.log('Primary contract extraction failed, attempting fallback.'); // Browser console
       }
       
       return results;
@@ -401,60 +403,46 @@ async function checkForContracts() {
     
     console.log('Extracted contracts:', contracts);
     
-    // Get page state information to help with debugging
-    const pageState = await page.evaluate(() => {
-      return {
-        url: window.location.href,
-        title: document.title,
-        hasReserveSection: document.body.textContent.includes('Reserve your room'),
-        hasWeekMentions: document.body.textContent.match(/(\d+)\s*weeks?/gi) || [],
-        hasPriceMentions: document.body.textContent.match(/£(\d+)/gi) || []
-      };
-    });
-    
-    console.log('Page state:', pageState);
-    
-    // Process the results
     if (!contracts || contracts.length === 0) {
-      console.log('No contract information found.');
-      
+      console.log('No contract information found after evaluation.');
+      const pageStateInfo = await page.evaluate(() => ({
+          url: window.location.href,
+          title: document.title,
+          bodyTextStart: document.body ? document.body.innerText.substring(0, 500) : "No body"
+      }));
       await sendDiscordMessage({
         title: '❓ Contract Check - No Details Found',
-        description: `The bot couldn't find any contract information. This could mean either:\n• No rooms are available\n• The website structure has changed\n• Bot needs navigation improvements\n\nCurrent page: ${pageState.title}\nURL: ${pageState.url}`,
-        color: 15105570, // Orange/yellow
+        description: `The bot couldn't find any contract information. This could mean no rooms are available, a site change, or an issue with selectors.\nPage: ${pageStateInfo.title}\nURL: ${pageStateInfo.url}`,
+        color: 15105570, 
         url: page.url()
       });
     } else {
-      // Check for non-51-week contracts
       const newContracts = contracts.filter(contract => 
         contract.term && 
-        !contract.term.includes('51')
+        !contract.term.includes('51') && // Check against "51" not "51 weeks" to be broader
+        contract.term !== 'Unknown term'  // Filter out truly unknown terms
       );
       
       if (newContracts.length > 0) {
         console.log('New contract options found!');
-        
-        // Send notification with details
         await sendDiscordMessage({
           title: '🎉 New Contract Options Available!',
           description: 'Non-standard contract options have been found for ensuite rooms at Pier Quays!',
-          color: 5814783, // Green
+          color: 5814783, 
           fields: newContracts.map(contract => ({
-            name: contract.term,
-            value: `📅 ${contract.dates}\n💰 ${contract.price}\n📋 ${contract.type}`,
-            inline: true
+            name: `${contract.term} (${contract.type})`,
+            value: `📅 ${contract.dates}\n💰 ${contract.price}`,
+            inline: false // Easier to read
           })),
           url: page.url()
         });
       } else {
-        console.log('Only standard 51-week contracts found.');
-        
-        // Optional status update if environment variable is set
+        console.log('Only standard 51-week contracts (or no non-51 week) found.');
         if (process.env.SEND_STATUS_UPDATES === 'true') {
           await sendDiscordMessage({
-            title: 'Contract Check Completed',
-            description: 'Only standard 51-week contracts are currently available.',
-            color: 10197915, // Blue
+            title: 'Contract Check Completed (Standard Only)',
+            description: `Only standard 51-week contracts found, or no other options. Total contracts checked: ${contracts.length}. First found: ${contracts.length > 0 ? contracts[0].term : 'N/A'}`,
+            color: 10197915,
             url: page.url()
           });
         }
@@ -463,36 +451,24 @@ async function checkForContracts() {
     
   } catch (error) {
     console.error('Error during check:', error);
-    
-    // More detailed error reporting
-    let errorDetails = `Error: ${error.message}`;
-    
-    // Add page info if available
+    let errorDetails = `Error: ${error.message}\nStack: ${error.stack}`;
     if (page) {
       try {
         errorDetails += `\nCurrent URL: ${page.url()}`;
-        const title = await page.title().catch(() => 'Unknown');
+        const title = await page.title().catch(() => 'Unknown Title');
         errorDetails += `\nPage title: ${title}`;
-        
-        // Get HTML snippet where error might have occurred
-        const bodyContent = await page.evaluate(() => {
-          return document.body ? document.body.innerText.substring(0, 500) + '...' : 'No body content';
-        }).catch(() => 'Could not extract body content');
-        
+        const bodyContent = await page.evaluate(() => document.body ? document.body.innerText.substring(0, 1000) + '...' : 'No body content').catch(() => 'Could not extract body content');
         errorDetails += `\nPage content snippet: ${bodyContent}`;
       } catch (e) {
-        errorDetails += `\nError getting page details: ${e.message}`;
+        errorDetails += `\nError getting page details for error report: ${e.message}`;
       }
     }
-    
-    // Send error notification
     await sendDiscordMessage({
       title: '❌ Bot Error',
-      description: `The bot encountered an error:\n\`\`\`${errorDetails}\`\`\``,
-      color: 15158332, // Red
+      description: `The bot encountered an error:\n\`\`\`${errorDetails.substring(0, 1900)}\`\`\``, // Discord limit
+      color: 15158332, 
     });
   } finally {
-    // Clean up
     if (browser) {
       console.log('Closing browser...');
       await browser.close();
@@ -500,38 +476,22 @@ async function checkForContracts() {
   }
 }
 
-// Simple health check endpoint for Railway/Render
+// Health check endpoint
 if (process.env.ENABLE_HEALTH_CHECK === 'true') {
   const http = require('http');
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Bot is running');
   });
-  
   const port = process.env.PORT || 3000;
-  server.listen(port, () => {
-    console.log(`Health check server running on port ${port}`);
-  });
+  server.listen(port, () => console.log(`Health check server running on port ${port}`));
 }
 
-// Schedule the check
-cron.schedule(CHECK_INTERVAL, checkForContracts, {
-  scheduled: true,
-  timezone: 'Europe/London' // Set to UK timezone
-});
-
-// Initial check on startup with a slight delay
-const startupDelay = Math.floor(Math.random() * 30000) + 15000; // 15-45 seconds
-console.log(`Unite Students Contract Checker Bot starting in ${startupDelay/1000} seconds...`);
+// Schedule and initial run
+cron.schedule(CHECK_INTERVAL, checkForContracts, { scheduled: true, timezone: 'Europe/London' });
+const startupDelay = Math.floor(Math.random() * 10000) + 5000; // 5-15 seconds
+console.log(`Unite Students Contract Checker Bot starting initial check in ${startupDelay/1000} seconds...`);
 setTimeout(checkForContracts, startupDelay);
 
-// Keep the process alive
-process.on('SIGINT', () => {
-  console.log('Bot shutting down...');
-  process.exit(0);
-});
-
-// Prevent crashes
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
-});
+process.on('SIGINT', () => { console.log('Bot shutting down...'); process.exit(0); });
+process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err); });
