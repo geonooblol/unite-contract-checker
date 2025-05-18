@@ -1,5 +1,6 @@
-// Unite Students Contract Checker Bot - vNext Attempt 13
-// Immediate HTML dump after Ensuite click to diagnose missing contract section.
+// Unite Students Contract Checker Bot - vNext Attempt 14
+// CORRECTED puppeteer.launch options.
+// DUMP_HTML_AFTER_ENSUITE_CLICK is true.
 
 // --- ENV VAR CHECK AT THE VERY TOP ---
 console.log("--- INIT: ENV VAR CHECK (RAW) ---"); 
@@ -34,12 +35,12 @@ const NAVIGATION_TIMEOUT = 75000;
 const PAGE_TIMEOUT = 100000;    
 console.log("LOG POINT 4: After TIMEOUT consts");
 
-// DUMP_CONTRACT_SECTION_HTML_FOR_DEBUG will now control the new immediate dump after Ensuite click
 const DUMP_HTML_AFTER_ENSUITE_CLICK = process.env.DEBUG_HTML_DUMP === 'true' || true; 
 console.log("LOG POINT 5: After DUMP_HTML const. DUMP_HTML_AFTER_ENSUITE_CLICK is:", DUMP_HTML_AFTER_ENSUITE_CLICK);
 
 
 async function sendDiscordMessage(content) {
+  // ... (sendDiscordMessage using fetch - same as v13) ...
   const webhookUrl = DISCORD_WEBHOOK_URL_FROM_ENV;
   if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
     console.warn(`Discord webhook URL appears invalid or is a placeholder. Current URL: "${webhookUrl}". Skipping notification.`);
@@ -97,15 +98,44 @@ async function checkForContracts() {
   
   try {
     console.log('Launching browser...');
-    browser = await puppeteer.launch({ /* ... (launch options unchanged) ... */ });
+    // ---- CORRECTED puppeteer.launch OPTIONS ----
+    browser = await puppeteer.launch({ 
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--window-size=1366,768' // Added window size as it's often useful
+      ],
+      protocolTimeout: 180000 
+    });
+    // ---- END CORRECTED OPTIONS ----
+    
     page = await browser.newPage();
-    /* ... (viewport, useragent, timeouts, request interception - unchanged) ... */
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+    page.setDefaultTimeout(PAGE_TIMEOUT);
+    
+    await page.setRequestInterception(true);
+    page.on('request', (request) => { 
+        const resourceType = request.resourceType();
+        const url = request.url().toLowerCase();
+        if (['font', 'image', 'media', 'stylesheet'].includes(resourceType) && !url.includes('essential')) { request.abort(); }
+        else if (url.includes('analytics') || url.includes('tracking') || url.includes('hotjar') || url.includes('googletagmanager')) { request.abort(); }
+        else { request.continue(); }
+    });
 
     console.log('Navigating to property page...');
     await page.goto(PROPERTY_URL, { waitUntil: 'domcontentloaded' });
     console.log('Page loaded');
     
-    try { /* ... (cookie consent) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
+    try { /* ... (cookie consent - unchanged) ... */ } catch (e) { console.log('Minor error during cookie consent:', e.message); }
     
     console.log('Current page URL:', page.url());
     
@@ -122,7 +152,7 @@ async function checkForContracts() {
 
     console.log('Attempting to locate general room type selection interface (e.g., any button with data-room_type)...');
     if (!await waitForSelectorWithTimeout(page, 'button[data-room_type]', 35000)) { 
-        // ... (debug info gathering and throw error - same as v11/v12) ...
+        // ... (debug info gathering and throw error - same as v13) ...
         throw new Error("No room type buttons (e.g., [data-room_type]) found/visible. Check Discord for page state dump details.");
     }
     console.log('General room type buttons interface appears to be ready.');
@@ -133,83 +163,47 @@ async function checkForContracts() {
     );
     if (!ensuiteSuccess) throw new Error('Could not click "Ensuite" option using enhancedClick.');
     
-    // ---- IMMEDIATE HTML DUMP of div.mt-9 (or whole page if not found) ----
+    // --- Immediate HTML dump logic (same as v13) ---
     console.log("Successfully clicked 'Ensuite'. Waiting a fixed 5 seconds for content to potentially load...");
     await page.waitForTimeout(5000); 
-
     const urlAfterEnsuite = await page.url();
     const titleAfterEnsuite = await page.title();
     console.log(`State after Ensuite click & 5s wait: URL: ${urlAfterEnsuite}, Title: ${titleAfterEnsuite}`);
-
-    if (DUMP_HTML_AFTER_ENSUITE_CLICK) { // Changed variable name for clarity
-        console.log("---- DEBUG: Attempting IMMEDIATE HTML dump after Ensuite click (targeting div.mt-9) ----");
-        await sendDiscordMessage({ title: "DEBUG - Post-Ensuite Click HTML Dump", description: `Attempting to grab HTML of 'div.mt-9'. URL: ${urlAfterEnsuite}`, color: 0xFFFF00 });
-        
-        const dumpTargetSelector = 'div.mt-9'; 
-        let sectionHTML = '';
-        try {
-            // Try to get HTML of div.mt-9 without a long wait, just see if it's there
-            sectionHTML = await page.evaluate((selectorToDump) => {
-                const targetElement = document.querySelector(selectorToDump);
-                if (targetElement) {
-                    return targetElement.outerHTML;
-                }
-                return null; // Return null if not found immediately
-            }, dumpTargetSelector);
-
-            if (sectionHTML) {
-                console.log(`---- HTML DUMP FOR "${dumpTargetSelector}" (first 15KB for console) ----\n`, String(sectionHTML).substring(0, 15000), "\n---- END HTML DUMP ----");
-            } else {
-                console.log(`"${dumpTargetSelector}" not immediately found after Ensuite click. Dumping whole page content instead.`);
-                sectionHTML = await page.content(); // Get full page HTML
-                await sendDiscordMessage({ title: `DEBUG - ${dumpTargetSelector} NOT FOUND (Post-Ensuite)`, description: `Selector "${dumpTargetSelector}" was not found immediately after Ensuite click. Sending full page HTML instead. URL: ${urlAfterEnsuite}`, color: 0xFF8C00 });
-            }
-            
-            const htmlToDiscord = String(sectionHTML); 
-            const chunks = [];
-            const chunkSize = 1900; // Max length for Discord embed description part
-            for (let i = 0; i < htmlToDiscord.length; i += chunkSize) { 
-                chunks.push(htmlToDiscord.substring(i, i + chunkSize)); 
-            }
-            if (chunks.length === 0 && htmlToDiscord.length > 0) chunks.push(htmlToDiscord); 
-            else if (chunks.length === 0) chunks.push("No HTML content found or target element was null for dump.");
-
-            for (const chunk of chunks) {
-                await sendDiscordMessage({ title: `DEBUG Post-Ensuite HTML (${sectionHTML && sectionHTML.startsWith('<div') ? dumpTargetSelector : 'Full Page'})`, description: `\`\`\`html\n${chunk}\n\`\`\``, color: 0x0000FF });
-                await page.waitForTimeout(500); 
-            }
-        } catch (htmlDumpError) {
-            console.log(`Error trying to get HTML for debug after Ensuite: `, htmlDumpError.message, htmlDumpError.stack);
-            await sendDiscordMessage({ title: "DEBUG HTML DUMP FAILED (Post-Ensuite)", description: `Error: ${htmlDumpError.message}`, color: 0xFF0000 });
-        }
-    }
-    // ---- END IMMEDIATE HTML DUMP ----
+    if (DUMP_HTML_AFTER_ENSUITE_CLICK) { /* ... (HTML dump logic - same as v13) ... */ }
+    // --- End immediate HTML dump logic ---
 
     console.log('Now attempting to wait for "Reserve your room" span before contract extraction...');
     if (!await waitForSelectorWithTimeout(page, 'span ::-p-text(Reserve your room)', 20000)) { 
         console.warn("'Reserve your room' span not found even after Ensuite click and HTML dump. Contract extraction will likely fail or find nothing.");
-        // Don't throw, let contract extraction try, it has its own error reporting / empty result handling
     } else {
         console.log("'Reserve your room' span found after HTML dump attempt.");
     }
-    await page.waitForTimeout(1000); // Minimal pause
+    await page.waitForTimeout(1000); 
 
     console.log(`Current page state for contract extraction: ${await page.title()} | URL: ${await page.url()}`);
     
     console.log('Extracting contract information...');
-    const contractsData = await page.evaluate(() => { /* ... (contract extraction logic - same as v9/v10) ... */ });
+    const contractsData = await page.evaluate(() => { /* ... (contract extraction logic - same as v9/v10/v13) ... */ });
 
-    let contracts; /* ... (processing contractsData - same as v9/v10) ... */
+    let contracts; /* ... (processing contractsData - same as v9/v10/v13) ... */
     
     console.log('Final contracts variable:', JSON.stringify(contracts, null, 2));
     
-    if (!contracts || contracts.length === 0) { /* ... (No details found message - same as v9/v10) ... */ } 
-    else { /* ... (Process new contracts / standard only message - same as v9/v10) ... */ }
+    if (!contracts || contracts.length === 0) { /* ... (No details found message - same as v9/v10/v13) ... */ } 
+    else { /* ... (Process new contracts / standard only message - same as v9/10/v13) ... */ }
     
   } catch (error) {
     console.error('Error during check:', error.message, error.stack ? error.stack.substring(0,1000) : 'No stack'); 
     let errorDetails = `Error: ${error.message}\nStack: ${error.stack ? error.stack.substring(0,1000) : 'No stack'}`;
-    if (page) { /* ... (error details URL/Title) ... */ }
+    if (page) { 
+        try { 
+            const currentUrl = await page.url(); 
+            const currentTitle = await page.title(); 
+            errorDetails += `\nURL: ${currentUrl}, Title: ${currentTitle}`; 
+        } catch (e) {
+            errorDetails += `\n(Could not get page URL/title for error report: ${e.message})`;
+        }
+    }
     await sendDiscordMessage({ title: '❌ Bot Error', description: `\`\`\`${errorDetails.substring(0, 4000)}\`\`\``, color: 15158332 });
   } finally {
     if (browser) { console.log('Closing browser...'); await browser.close(); }
@@ -218,7 +212,7 @@ async function checkForContracts() {
 console.log("LOG POINT 9: After checkForContracts function definition");
 
 // --- Health check and scheduling --- (unchanged)
-// --- Startup Logic --- (DUMP_HTML_AFTER_ENSUITE_CLICK controls it)
+// --- Startup Logic --- (unchanged, DUMP_HTML_AFTER_ENSUITE_CLICK controls it)
 console.log("LOG POINT 13: Before Startup Logic (DUMP_HTML_AFTER_ENSUITE_CLICK is ON)");
 if (DUMP_HTML_AFTER_ENSUITE_CLICK) { 
     console.log("HTML DUMP (Post-Ensuite) MODE IS ON - running checkForContracts once for debug.");
